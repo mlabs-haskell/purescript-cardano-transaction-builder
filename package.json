@@ -1,0 +1,15 @@
+{
+    "name": "purescript-cardano-types",
+    "type": "module",
+    "scripts": {
+        "test": "spago test"
+    },
+    "dependencies": {
+        "@mlabs-haskell/cardano-serialization-lib-gc": "^1.0.10",
+        "@mlabs-haskell/json-bigint": "^2.0.0"
+    },
+    "prettier": {
+        "arrowParens": "avoid",
+        "trailingComma": "none"
+    }
+}
