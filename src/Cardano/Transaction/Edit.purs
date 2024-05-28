@@ -19,8 +19,15 @@
 module Cardano.Transaction.Edit
   ( editTransaction
   , editTransactionSafe
-  )
-where
+  , toEditableTransactionSafe
+  , toEditableTransaction
+  , fromEditableTransactionSafe
+  , fromEditableTransaction
+  , RedeemerPurpose(ForSpend, ForMint, ForReward, ForCert)
+  , redeemerPurposeToRedeemerTag
+  , DetachedRedeemer
+  , EditableTransaction
+  ) where
 
 import Prelude
 

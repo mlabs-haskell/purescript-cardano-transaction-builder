@@ -16,7 +16,7 @@ import Cardano.Transaction.Builder
 import Cardano.Transaction.Edit (editTransaction, editTransactionSafe)
 import Cardano.Types
   ( Redeemer(Redeemer)
-  , RedeemerTag(Cert, Spend, Reward, Mint)
+  , RedeemerTag(Spend)
   , Transaction
   , TransactionInput(TransactionInput)
   , TransactionOutput(TransactionOutput)
@@ -41,7 +41,6 @@ import Cardano.Types.TransactionBody (_inputs)
 import Cardano.Types.Value (Value(..))
 import Data.ByteArray (byteArrayFromIntArrayUnsafe, hexToByteArrayUnsafe)
 import Data.Either (Either(Left, Right))
-import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), fromJust)
 import Data.Newtype (wrap)
 import Data.Time.Duration (Milliseconds(Milliseconds))
@@ -215,18 +214,18 @@ builderTests = group "Cardano.Transaction.Builder" do
   let
     pkhUtxo =
       TransactionUnspentOutput
-        { input
+        { input: input1
         , output: pkhOutput
         }
     nsWitness = NativeScriptOutput (ScriptValue $ ScriptAll [])
     plutusScriptRefWitness =
-      PlutusScriptOutput (ScriptReference input SpendInput) RedeemerDatum.unit Nothing
+      PlutusScriptOutput (ScriptReference input1 SpendInput) RedeemerDatum.unit Nothing
   group "SpendOutput" do
     testBuilderSteps "PKH output" [ SpendOutput pkhUtxo Nothing ] $
-      Transaction.empty # _body <<< _inputs .~ [ input ]
+      Transaction.empty # _body <<< _inputs .~ [ input1 ]
     testBuilderSteps "PKH output x2 -> 1"
       [ SpendOutput pkhUtxo Nothing, SpendOutput pkhUtxo Nothing ] $
-      Transaction.empty # _body <<< _inputs .~ [ input ]
+      Transaction.empty # _body <<< _inputs .~ [ input1 ]
     testBuilderStepsFail "PKH output with wrong witness"
       [ SpendOutput pkhUtxo (Just nsWitness) ] $
       WrongOutputType ScriptHashWitness pkhUtxo
@@ -250,8 +249,8 @@ testBuilderStepsFail
   -> TestPlanM (Aff Unit) Unit
 testBuilderStepsFail label steps err = test label do
   let
-    result = buildTransaction MainnetId Map.empty steps
-  Left err `shouldEqual` map _.transaction result
+    result = buildTransaction MainnetId steps
+  Left err `shouldEqual` result
 
 testBuilderSteps
   :: String
@@ -260,49 +259,8 @@ testBuilderSteps
   -> TestPlanM (Aff Unit) Unit
 testBuilderSteps label steps expected = test label do
   let
-    result = buildTransaction MainnetId Map.empty steps
-  Right expected `shouldEqual` map _.transaction result
-
-input :: TransactionInput
-input = TransactionInput
-  { index: UInt.fromInt 0
-  , transactionId: unsafePartial $ fromJust $ decodeCbor $ wrap
-      ( byteArrayFromIntArrayUnsafe
-          [ 198
-          , 181
-          , 74
-          , 163
-          , 1
-          , 136
-          , 122
-          , 243
-          , 144
-          , 189
-          , 52
-          , 73
-          , 131
-          , 62
-          , 76
-          , 214
-          , 111
-          , 246
-          , 27
-          , 94
-          , 104
-          , 177
-          , 247
-          , 124
-          , 132
-          , 168
-          , 192
-          , 135
-          , 59
-          , 119
-          , 111
-          , 249
-          ]
-      )
-  }
+    result = buildTransaction MainnetId steps
+  Right expected `shouldEqual` result
 
 pkhOutput :: TransactionOutput
 pkhOutput =
