@@ -4,40 +4,39 @@ import Prelude
 
 import Aeson (class EncodeAeson, encodeAeson)
 import Cardano.AsCbor (encodeCbor)
-import Cardano.Types (DataHash, NetworkId, PlutusData, PlutusScript, StakeCredential, Transaction, TransactionInput, TransactionUnspentOutput)
-import Cardano.Types (Slot)
+import Cardano.Types
+  ( DataHash
+  , NetworkId
+  , Slot
+  , Transaction
+  , AssetName
+  , Coin
+  , CostModel
+  , Epoch
+  , Language
+  , Mint
+  , NativeScript
+  , PaymentPubKeyHash
+  , PlutusData
+  , PlutusScript
+  , PoolPubKeyHash
+  , PoolParams
+  , Slot
+  , RewardAddress
+  )
 import Cardano.Types.Address (getPaymentCredential)
-import Cardano.Types.AssetName (AssetName)
-import Cardano.Types.AssetName (AssetName)
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.Certificate (Certificate(..))
-import Cardano.Types.Certificate (Certificate)
-import Cardano.Types.Coin (Coin)
-import Cardano.Types.Coin (Coin)
-import Cardano.Types.CostModel (CostModel)
 import Cardano.Types.Credential (Credential(..))
 import Cardano.Types.Credential as Credential
 import Cardano.Types.DataHash as PlutusData
-import Cardano.Types.Epoch (Epoch)
 import Cardano.Types.ExUnits as ExUnits
 import Cardano.Types.Int as Int
-import Cardano.Types.Int as Int
-import Cardano.Types.Language (Language)
-import Cardano.Types.Mint (Mint)
 import Cardano.Types.Mint as Mint
-import Cardano.Types.NativeScript (NativeScript)
-import Cardano.Types.NativeScript (NativeScript)
 import Cardano.Types.OutputDatum (OutputDatum(OutputDatumHash, OutputDatum))
-import Cardano.Types.PaymentPubKeyHash (PaymentPubKeyHash)
-import Cardano.Types.PlutusData (PlutusData)
-import Cardano.Types.PlutusScript (PlutusScript)
-import Cardano.Types.PoolParams (PoolParams)
-import Cardano.Types.PoolPubKeyHash (PoolPubKeyHash)
 import Cardano.Types.Redeemer (Redeemer(..))
 import Cardano.Types.RedeemerDatum (RedeemerDatum)
 import Cardano.Types.RedeemerTag (RedeemerTag(..))
-import Cardano.Types.RewardAddress (RewardAddress)
-import Cardano.Types.ScriptHash (ScriptHash)
 import Cardano.Types.ScriptHash (ScriptHash)
 import Cardano.Types.StakeCredential (StakeCredential)
 import Cardano.Types.StakePubKeyHash (StakePubKeyHash)
@@ -61,7 +60,6 @@ import Data.Lens.Record (prop)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), isJust, maybe)
-import Data.Maybe (Maybe)
 import Data.Newtype (class Newtype, unwrap, wrap)
 import Data.Set as Set
 import Data.Show.Generic (genericShow)
@@ -170,30 +168,6 @@ derive instance Generic StakeWitness _
 instance Show StakeWitness where
   show = genericShow
 
--- | Contains a value redeemer corresponds to, different for each possible
--- | `RedeemerTag`.
--- | Allows to uniquely compute redeemer index, given a `RedeemersContext` that
--- | is valid for the transaction.
-data RedeemerPurpose
-  = ForSpend TransactionInput
-  | ForMint ScriptHash
-  | ForReward RewardAddress
-  | ForCert Certificate
-
-derive instance Generic RedeemerPurpose _
-derive instance Eq RedeemerPurpose
-derive instance Ord RedeemerPurpose
-
-instance EncodeAeson RedeemerPurpose where
-  encodeAeson = case _ of
-    ForSpend txo -> encodeAeson { tag: "ForSpend", value: encodeAeson txo }
-    ForMint mps -> encodeAeson { tag: "ForMint", value: encodeAeson mps }
-    ForReward addr -> encodeAeson { tag: "ForReward", value: encodeAeson addr }
-    ForCert cert -> encodeAeson { tag: "ForCert", value: encodeAeson cert }
-
-instance Show RedeemerPurpose where
-  show = genericShow
-
 type Context =
   { transaction :: Transaction
   , costModels :: Map Language CostModel
@@ -273,10 +247,10 @@ explainTxBuildError (IncorrectDatumHash utxo datum datumHash) =
     <> "\n  UTxO: "
     <> show utxo
 explainTxBuildError (WrongOutputType ScriptHashWitness utxo) =
-  "The UTxO you provided requires a Script witness to unlock. UTxO: " <> show
+  "The UTxO you provided requires no witness, because the payment credential of the address is a `PubKeyHash`. UTxO: " <> show
     utxo
 explainTxBuildError (WrongOutputType PubKeyHashWitness utxo) =
-  "The UTxO you provided requires a PubKeyHash witness to unlock. UTxO: " <>
+  "The UTxO you provided requires a `ScriptHash` witness to unlock, because the payment credential of the address is a `ScriptHash`. UTxO: " <>
     show utxo
 explainTxBuildError
   (WrongStakeCredentialType operation expWitnessType stakeCredential) =
@@ -325,8 +299,7 @@ buildTransaction networkId costModels steps =
     map (snd >>> extract)
       $ runExcept
       $ flip runStateT context
-      $
-        processConstraints steps
+      $ processConstraints steps
 
 processConstraints :: Array TransactionBuilderStep -> M Unit
 processConstraints = traverse_ processConstraint
@@ -338,11 +311,11 @@ processConstraint = case _ of
     _transaction <<< _body <<< _inputs
       %= pushUnique (unwrap utxo).input
     useSpendWitness utxo spendWitness
-  Pay utxo -> do
+  Pay output -> do
     _transaction <<< _body <<< _outputs
       -- intentionally not using pushUnique: we can
       -- create multiple outputs of the same shape
-      %= flip append [ utxo ]
+      %= flip append [ output ]
   MintAsset scriptHash assetName amount mintWitness -> do
     useMintAssetWitness scriptHash assetName amount mintWitness
   RegisterStake stakeCredential -> do
@@ -440,7 +413,7 @@ useCredentialWitness credentialAction stakeCredential witness = do
         stakeCredential
       usePlutusScriptWitness plutusScriptWitness
       let
-        redeemer = UnindexedRedeemer
+        redeemer =
           { purpose: case credentialAction of
               Withdrawal rewardAddress -> ForReward rewardAddress
               StakeCert cert -> ForCert cert
@@ -481,7 +454,7 @@ useSpendWitness utxo = case _ of
       useDatumWitnessForUtxo utxo mbDatumWitness
       -- attach the redeemer
       let
-        uiRedeemer = UnindexedRedeemer
+        uiRedeemer =
           { purpose: ForSpend (unwrap utxo).input
           , datum: unwrap redeemerDatum
           }
@@ -562,21 +535,36 @@ appendInput
   :: TransactionInput -> Array TransactionInput -> Array TransactionInput
 appendInput a b = Set.toUnfoldable (Set.singleton a <> Set.fromFoldable b)
 
+-- | Contains a value redeemer corresponds to, different for each possible
+-- | `RedeemerTag`.
+-- | Allows to uniquely compute redeemer index, given a `RedeemersContext` that
+-- | is valid for the transaction.
+data RedeemerPurpose
+  = ForSpend TransactionInput
+  | ForMint ScriptHash
+  | ForReward RewardAddress
+  | ForCert Certificate
+
+derive instance Generic RedeemerPurpose _
+derive instance Eq RedeemerPurpose
+derive instance Ord RedeemerPurpose
+
+instance EncodeAeson RedeemerPurpose where
+  encodeAeson = case _ of
+    ForSpend txo -> encodeAeson { tag: "ForSpend", value: encodeAeson txo }
+    ForMint mps -> encodeAeson { tag: "ForMint", value: encodeAeson mps }
+    ForReward addr -> encodeAeson { tag: "ForReward", value: encodeAeson addr }
+    ForCert cert -> encodeAeson { tag: "ForCert", value: encodeAeson cert }
+
+instance Show RedeemerPurpose where
+  show = genericShow
+
 -- | Redeemer that hasn't yet been indexed, that tracks its purpose info
 -- | that is enough to find its index given a `RedeemersContext`.
-newtype UnindexedRedeemer = UnindexedRedeemer
+type UnindexedRedeemer =
   { datum :: PlutusData
   , purpose :: RedeemerPurpose
   }
-
-derive instance Generic UnindexedRedeemer _
-derive instance Newtype UnindexedRedeemer _
-derive newtype instance Eq UnindexedRedeemer
-derive newtype instance Ord UnindexedRedeemer
-derive newtype instance EncodeAeson UnindexedRedeemer
-
-instance Show UnindexedRedeemer where
-  show = genericShow
 
 -- | Ignore the value that the redeemer points to
 redeemerPurposeToRedeemerTag :: RedeemerPurpose -> RedeemerTag
@@ -587,7 +575,7 @@ redeemerPurposeToRedeemerTag = case _ of
   ForCert _ -> Cert
 
 unindexedRedeemerToRedeemer :: UnindexedRedeemer -> Redeemer
-unindexedRedeemerToRedeemer (UnindexedRedeemer { datum, purpose }) =
+unindexedRedeemerToRedeemer { datum, purpose } =
   Redeemer
     { tag: redeemerPurposeToRedeemerTag purpose
     , "data": wrap datum

@@ -16,7 +16,11 @@
 -- | transactions, that lets the developer abstract away from the indices.
 -- |
 -- | The main functions are `editTransaction` and `editTransactionSafe`
-module Cardano.Transaction.Edit where
+module Cardano.Transaction.Edit
+  ( editTransaction
+  , editTransactionSafe
+  )
+where
 
 import Prelude
 

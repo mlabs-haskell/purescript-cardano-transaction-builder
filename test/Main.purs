@@ -2,28 +2,48 @@ module Test.Main where
 
 import Prelude
 
-import Cardano.AsCbor (class AsCbor, decodeCbor, encodeCbor)
-import Cardano.Transaction.Builder (ExpectedWitnessType(..), OutputWitness(..), RefInputAction(..), ScriptWitness(..), TransactionBuilderStep(..), TxBuildError(..), buildTransaction)
-import Cardano.Types (Transaction(..), TransactionInput(..), TransactionOutput(..), TransactionWitnessSet)
+import Data.Lens ((.~), (<>~))
+import Cardano.AsCbor (decodeCbor)
+import Cardano.Transaction.Builder
+  ( ExpectedWitnessType(..)
+  , OutputWitness(..)
+  , RefInputAction(..)
+  , ScriptWitness(..)
+  , TransactionBuilderStep(..)
+  , TxBuildError(..)
+  , buildTransaction
+  )
+import Cardano.Transaction.Edit (editTransaction, editTransactionSafe)
+import Cardano.Types
+  ( Redeemer(Redeemer)
+  , RedeemerTag(Cert, Spend, Reward, Mint)
+  , Transaction
+  , TransactionInput(TransactionInput)
+  , TransactionOutput(TransactionOutput)
+  , TransactionUnspentOutput(TransactionUnspentOutput)
+  , _outputs
+  , _redeemers
+  , _witnessSet
+  )
 import Cardano.Types.Address (Address(..))
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.Coin (Coin(..))
 import Cardano.Types.Credential (Credential(..))
+import Cardano.Types.ExUnits as ExUnits
 import Cardano.Types.MultiAsset as MultiAsset
 import Cardano.Types.NativeScript (NativeScript(..))
 import Cardano.Types.NetworkId (NetworkId(..))
+import Cardano.Types.PlutusData (PlutusData(..))
 import Cardano.Types.RedeemerDatum as RedeemerDatum
 import Cardano.Types.Transaction (_body)
 import Cardano.Types.Transaction as Transaction
 import Cardano.Types.TransactionBody (_inputs)
-import Cardano.Types.TransactionUnspentOutput (TransactionUnspentOutput(..))
 import Cardano.Types.Value (Value(..))
-import Data.ByteArray (ByteArray, byteArrayFromIntArrayUnsafe)
-import Data.Either (Either(..))
-import Data.Lens ((.~))
+import Data.ByteArray (byteArrayFromIntArrayUnsafe, hexToByteArrayUnsafe)
+import Data.Either (Either(Left, Right))
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromJust)
-import Data.Newtype (unwrap, wrap)
+import Data.Maybe (Maybe(Just, Nothing), fromJust)
+import Data.Newtype (wrap)
 import Data.Time.Duration (Milliseconds(Milliseconds))
 import Data.UInt as UInt
 import Effect (Effect)
@@ -33,7 +53,6 @@ import Mote.TestPlanM (TestPlanM, interpretWithConfig)
 import Partial.Unsafe (unsafePartial)
 import Test.Spec.Assertions (shouldEqual)
 import Test.Spec.Runner (defaultConfig)
-import Type.Proxy (Proxy(Proxy))
 
 main :: Effect Unit
 main = launchAff_ do
@@ -43,6 +62,156 @@ main = launchAff_ do
 
 suite :: TestPlanM (Aff Unit) Unit
 suite = do
+  editorTests
+  builderTests
+
+editorTests :: TestPlanM (Aff Unit) Unit
+editorTests = group "Cardano.Transaction.Edit" do
+  let
+    oneInput = Transaction.empty
+      # _witnessSet <<< _redeemers .~
+          [ Redeemer
+              { index: BigNum.zero
+              , data: RedeemerDatum.unit
+              , tag: Spend
+              , exUnits: ExUnits.empty
+              }
+          ]
+      # _body <<< _inputs .~
+          [ input1 ]
+  group "editTransaction" do
+    test "do nothing" do
+      editTransaction identity oneInput `shouldEqual` oneInput
+    test "attach one input to the end" do
+      let
+        tx' = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.zero
+                  , data: RedeemerDatum.unit
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~
+              [ input1, input2 ]
+      editTransaction (_body <<< _inputs <>~ [ input2 ]) oneInput
+        `shouldEqual` tx'
+    test "remove two inputs, before and after" do
+      let
+        tx = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.one
+                  , data: RedeemerDatum.unit
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~ [ input0, input1, input2 ]
+        tx' = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.zero
+                  , data: RedeemerDatum.unit
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~
+              [ input1 ]
+      editTransactionSafe (_body <<< _inputs .~ [ input1 ]) tx
+        `shouldEqual` Just tx'
+    test "remove two inputs with redeemers, before and after" do
+      let
+        tx = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.zero
+                  , data: RedeemerDatum.unit
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              , Redeemer
+                  { index: BigNum.one
+                  , data: wrap $ List []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              , Redeemer
+                  { index: BigNum.fromInt 2
+                  , data: wrap $ Map []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~ [ input0, input1, input2 ]
+        tx' = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.zero
+                  , data: wrap $ List []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~
+              [ input1 ]
+      editTransactionSafe (_body <<< _inputs .~ [ input1 ]) tx
+        `shouldEqual` Just tx'
+    test "remove input & redeemer, add another input & redeemer" do
+      let
+        tx = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              [ Redeemer
+                  { index: BigNum.zero
+                  , data: RedeemerDatum.unit
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              , Redeemer
+                  { index: BigNum.one
+                  , data: wrap $ Map []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~ [ input1, input2 ]
+        tx' = Transaction.empty
+          # _witnessSet <<< _redeemers .~
+              -- order is swapped because of `nub`...
+              [ Redeemer
+                  { index: BigNum.one
+                  , data: wrap $ Map []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              , Redeemer
+                  { index: BigNum.zero
+                  , data: wrap $ List []
+                  , tag: Spend
+                  , exUnits: ExUnits.empty
+                  }
+              ]
+          # _body <<< _inputs .~
+              [ input0, input2 ]
+      editTransactionSafe
+        ( (_body <<< _inputs .~ [ input0, input2 ]) >>>
+            ( _witnessSet <<< _redeemers <>~
+                [ Redeemer
+                    { index: BigNum.zero
+                    , data: wrap $ List []
+                    , tag: Spend
+                    , exUnits: ExUnits.empty
+                    }
+                ]
+            )
+        )
+        tx
+        `shouldEqual` Just tx'
+
+builderTests :: TestPlanM (Aff Unit) Unit
+builderTests = group "Cardano.Transaction.Builder" do
   let
     pkhUtxo =
       TransactionUnspentOutput
@@ -55,6 +224,9 @@ suite = do
   group "SpendOutput" do
     testBuilderSteps "PKH output" [ SpendOutput pkhUtxo Nothing ] $
       Transaction.empty # _body <<< _inputs .~ [ input ]
+    testBuilderSteps "PKH output x2 -> 1"
+      [ SpendOutput pkhUtxo Nothing, SpendOutput pkhUtxo Nothing ] $
+      Transaction.empty # _body <<< _inputs .~ [ input ]
     testBuilderStepsFail "PKH output with wrong witness"
       [ SpendOutput pkhUtxo (Just nsWitness) ] $
       WrongOutputType ScriptHashWitness pkhUtxo
@@ -64,6 +236,12 @@ suite = do
     testBuilderStepsFail "PKH output with wrong witness #2"
       [ SpendOutput pkhUtxo (Just plutusScriptRefWitness) ] $
       WrongOutputType ScriptHashWitness pkhUtxo
+  group "Pay" do
+    testBuilderSteps "#1" [ Pay pkhOutput ] $
+      Transaction.empty # _body <<< _outputs .~ [ pkhOutput ]
+  group "MintAsset" do
+    testBuilderSteps "#1" [ Pay pkhOutput ] $
+      Transaction.empty # _body <<< _outputs .~ [ pkhOutput ]
 
 testBuilderStepsFail
   :: String
@@ -208,7 +386,19 @@ pkhOutput =
       }
   )
 
--- utxo1 =  TransactionUnspentOutput
---     { input
---     , output
---     }
+mkTransactionInput :: String -> Int -> TransactionInput
+mkTransactionInput txId ix =
+  TransactionInput
+    { transactionId: unsafePartial $ fromJust $ decodeCbor $ wrap $
+        hexToByteArrayUnsafe txId
+    , index: UInt.fromInt ix
+    }
+
+input0 :: TransactionInput
+input0 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 0
+
+input1 :: TransactionInput
+input1 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 1
+
+input2 :: TransactionInput
+input2 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 2
