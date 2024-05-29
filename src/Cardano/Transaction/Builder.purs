@@ -409,7 +409,7 @@ assertNetworkId addr = do
   networkId <- gets _.networkId
   let
     addrNetworkId = getNetworkId addr
-  unless (networkId /= addrNetworkId) do
+  unless (networkId == addrNetworkId) do
     throwError WrongNetworkId
 
 assertOutputType :: ExpectedWitnessType -> TransactionUnspentOutput -> BuilderM Unit
