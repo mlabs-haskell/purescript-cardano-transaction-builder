@@ -235,6 +235,12 @@ builderTests = group "Cardano.Transaction.Builder" do
     testBuilderStepsFail "PKH output with wrong witness #2"
       [ SpendOutput pkhUtxo (Just plutusScriptRefWitness) ] $
       WrongOutputType ScriptHashWitness pkhUtxo
+    test "PKH output with wrong NetworkId" do
+      let
+        result =
+          buildTransaction TestnetId
+          [ SpendOutput pkhUtxo Nothing ]
+      result `shouldEqual` Left WrongNetworkId
   group "Pay" do
     testBuilderSteps "#1" [ Pay pkhOutput ] $
       Transaction.empty # _body <<< _outputs .~ [ pkhOutput ]
@@ -250,7 +256,7 @@ testBuilderStepsFail
 testBuilderStepsFail label steps err = test label do
   let
     result = buildTransaction MainnetId steps
-  Left err `shouldEqual` result
+  result `shouldEqual` Left err
 
 testBuilderSteps
   :: String
@@ -260,13 +266,13 @@ testBuilderSteps
 testBuilderSteps label steps expected = test label do
   let
     result = buildTransaction MainnetId steps
-  Right expected `shouldEqual` result
+  result `shouldEqual` Right expected
 
 pkhOutput :: TransactionOutput
 pkhOutput =
   ( TransactionOutput
       { address: BaseAddress
-          { networkId: TestnetId
+          { networkId: MainnetId
           , paymentCredential: wrap $ PubKeyHashCredential $ unsafePartial
               $ fromJust
               $ decodeCbor
