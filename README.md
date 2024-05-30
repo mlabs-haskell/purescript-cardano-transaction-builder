@@ -40,6 +40,8 @@ data DatumWitness
 
 The interface guides the user naturally, requiring the user to provide everything that is needed to perform a desired action on-chain.
 
+A returned transaction is still *unbalanced*, which means that the sum of inputs does not equal the sum of outputs. Transaction balancing is a non-trivial process, consider using [`cardano-transaction-lib`](https://github.com/Plutonomicon/cardano-transaction-lib/) for that.
+
 # Transaction editor
 
 Transaction editor is another interface for transaction building.

@@ -27,6 +27,11 @@ module Cardano.Transaction.Edit
   , redeemerPurposeToRedeemerTag
   , DetachedRedeemer
   , EditableTransaction
+  , RedeemersContext
+  , attachRedeemer
+  , detachRedeemer
+  , mkRedeemersContext
+  , attachRedeemers
   ) where
 
 import Prelude
@@ -43,14 +48,14 @@ import Cardano.Types
   , _redeemers
   , _witnessSet
   )
-import Data.Lens ((%~), (.~), (^.))
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.ExUnits as ExUnits
 import Cardano.Types.RedeemerDatum (RedeemerDatum)
 import Data.Array (catMaybes, findIndex, nub)
 import Data.Array as Array
-import Data.Either (blush, hush, note)
+import Data.Either (Either, blush, hush, note)
 import Data.Generic.Rep (class Generic)
+import Data.Lens ((%~), (.~), (^.))
 import Data.Map as Map
 import Data.Maybe (Maybe, fromMaybe)
 import Data.Newtype (unwrap, wrap)
@@ -125,6 +130,13 @@ detachRedeemer ctx (Redeemer { tag, index, data: datum, exUnits: _ }) = do
     Cert ->
       ForCert <$> Array.index ctx.certs indexInt
   pure { datum, purpose }
+
+attachRedeemers
+  :: RedeemersContext
+  -> Array DetachedRedeemer
+  -> Either DetachedRedeemer (Array Redeemer)
+attachRedeemers ctx redeemers = do
+  for redeemers \redeemer -> note redeemer $ attachRedeemer ctx redeemer
 
 attachRedeemer :: RedeemersContext -> DetachedRedeemer -> Maybe Redeemer
 attachRedeemer ctx { purpose, datum } = do

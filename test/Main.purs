@@ -239,7 +239,7 @@ builderTests = group "Cardano.Transaction.Builder" do
       let
         result =
           buildTransaction TestnetId
-          [ SpendOutput pkhUtxo Nothing ]
+            [ SpendOutput pkhUtxo Nothing ]
       result `shouldEqual` Left WrongNetworkId
   group "Pay" do
     testBuilderSteps "#1" [ Pay pkhOutput ] $
