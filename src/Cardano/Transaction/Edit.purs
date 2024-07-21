@@ -186,11 +186,12 @@ toEditableTransaction tx =
 -- | places them alongside the transaction.
 -- |
 -- | Fails if there are redeemers that do not point to anything.
-toEditableTransactionSafe :: Transaction -> Maybe EditableTransaction
+toEditableTransactionSafe :: Transaction -> Either Redeemer EditableTransaction
 toEditableTransactionSafe tx = do
   let
     ctx = mkRedeemersContext tx
-  redeemers <- for (tx ^. _witnessSet <<< _redeemers) (detachRedeemer ctx)
+  redeemers <- for (tx ^. _witnessSet <<< _redeemers) \redeemer ->
+    note redeemer $ detachRedeemer ctx redeemer
   pure $
     { transaction: tx # _witnessSet <<< _redeemers .~ []
     , redeemers
@@ -247,7 +248,11 @@ editTransaction f tx =
 -- |
 -- | - the input transaction's redeemers have invalid `index` pointers
 -- | - the resulting transaction's redeemers have invalid `index` pointers
-editTransactionSafe :: (Transaction -> Transaction) -> (Transaction -> Maybe Transaction)
+-- |
+-- | The first problematic redeemer will be returned as error value.
+editTransactionSafe
+  :: (Transaction -> Transaction)
+  -> (Transaction -> Either Redeemer Transaction)
 editTransactionSafe f tx = do
   editableTx <- toEditableTransactionSafe tx
   let

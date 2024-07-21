@@ -6,6 +6,7 @@ module Cardano.Transaction.Builder
       , RegisterStake
       , IssueCertificate
       , WithdrawStake
+      , DeregisterStake
       , RequireSignature
       , RegisterPool
       , RetirePool
@@ -22,14 +23,18 @@ module Cardano.Transaction.Builder
   , TxBuildError
       ( WrongSpendWitnessType
       , IncorrectDatumHash
+      , IncorrectScriptHash
       , WrongOutputType
       , WrongStakeCredentialType
       , DatumWitnessNotProvided
       , UnneededDatumWitness
+      , UnneededDeregisterWitness
       , UnableToAddMints
       , RedeemerIndexingError
+      , RedeemerIndexingInternalError
       , WrongNetworkId
       , ScriptHashAddressAndNoDatum
+      , NoTransactionNetworkId
       )
   , ExpectedWitnessType(ScriptHashWitness, PubKeyHashWitness)
   , CredentialAction
@@ -38,6 +43,7 @@ module Cardano.Transaction.Builder
       , Minting
       )
   , buildTransaction
+  , modifyTransaction
   , explainTxBuildError
   ) where
 
@@ -48,6 +54,7 @@ import Cardano.Transaction.Edit
   ( DetachedRedeemer
   , RedeemerPurpose(ForCert, ForReward, ForSpend, ForMint)
   , fromEditableTransactionSafe
+  , toEditableTransactionSafe
   )
 import Cardano.Types
   ( Address
@@ -64,9 +71,22 @@ import Cardano.Types
   , PlutusScript
   , PoolParams
   , PoolPubKeyHash
+  , Redeemer
   , RewardAddress
   , Slot
+  , StakeCredential(StakeCredential)
   , Transaction
+  , TransactionBody
+  , _certs
+  , _inputs
+  , _mint
+  , _outputs
+  , _referenceInputs
+  , _requiredSigners
+  , _ttl
+  , _validityStartInterval
+  , _withdrawals
+  , _networkId
   )
 import Cardano.Types.Address (getNetworkId, getPaymentCredential)
 import Cardano.Types.Certificate
@@ -80,48 +100,34 @@ import Cardano.Types.Certificate
       , MoveInstantaneousRewardsCert
       )
   )
-import Cardano.Types.Credential (Credential(..))
+import Cardano.Types.Credential
+  ( Credential(PubKeyHashCredential, ScriptHashCredential)
+  )
 import Cardano.Types.Credential as Credential
 import Cardano.Types.DataHash as PlutusData
 import Cardano.Types.Int as Int
 import Cardano.Types.Mint as Mint
+import Cardano.Types.NativeScript as NativeScript
 import Cardano.Types.OutputDatum (OutputDatum(OutputDatumHash, OutputDatum))
+import Cardano.Types.PlutusScript as PlutusScript
 import Cardano.Types.RedeemerDatum (RedeemerDatum)
 import Cardano.Types.ScriptHash (ScriptHash)
 import Cardano.Types.StakeCredential (StakeCredential)
 import Cardano.Types.StakePubKeyHash (StakePubKeyHash)
 import Cardano.Types.Transaction (_body, _isValid, _witnessSet)
 import Cardano.Types.Transaction as Transaction
-import Cardano.Types.TransactionBody
-  ( TransactionBody
-  , _certs
-  , _inputs
-  , _mint
-  , _outputs
-  , _referenceInputs
-  , _requiredSigners
-  , _ttl
-  , _validityStartInterval
-  , _withdrawals
-  )
 import Cardano.Types.TransactionInput (TransactionInput)
 import Cardano.Types.TransactionOutput (TransactionOutput, _address, _datum)
-import Cardano.Types.TransactionUnspentOutput
-  ( TransactionUnspentOutput
-  , _output
-  )
-import Cardano.Types.TransactionWitnessSet
-  ( _nativeScripts
-  , _plutusData
-  , _plutusScripts
-  )
+import Cardano.Types.TransactionUnspentOutput (TransactionUnspentOutput, _output)
+import Cardano.Types.TransactionWitnessSet (_nativeScripts, _plutusData, _plutusScripts)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.Except (Except, runExcept)
 import Control.Monad.State (StateT, modify_, runStateT)
 import Control.Monad.State.Trans (gets)
 import Data.Array (nub)
+import Data.Bifunctor (lmap)
 import Data.ByteArray (byteArrayToHex)
-import Data.Either (Either, note)
+import Data.Either (Either(Left, Right), either, note)
 import Data.Generic.Rep (class Generic)
 import Data.Lens (Lens', view, (%=), (.=), (.~), (<>=), (^.))
 import Data.Lens.Record (prop)
@@ -129,8 +135,9 @@ import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), isJust, maybe)
 import Data.Newtype (unwrap, wrap)
 import Data.Show.Generic (genericShow)
-import Data.Traversable (traverse_)
+import Data.Traversable (for_, traverse_)
 import Data.Tuple (snd)
+import Record (merge)
 import Type.Proxy (Proxy(Proxy))
 
 data TransactionBuilderStep
@@ -138,6 +145,7 @@ data TransactionBuilderStep
   | Pay TransactionOutput
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
   | RegisterStake StakeCredential
+  | DeregisterStake StakeCredential (Maybe CredentialWitness)
   | IssueCertificate Certificate (Maybe CredentialWitness)
   | WithdrawStake StakeCredential Coin (Maybe CredentialWitness)
   | RequireSignature PaymentPubKeyHash
@@ -149,6 +157,7 @@ data TransactionBuilderStep
   | SetIsValid Boolean
 
 derive instance Generic TransactionBuilderStep _
+derive instance Eq TransactionBuilderStep
 instance Show TransactionBuilderStep where
   show = genericShow
 
@@ -161,6 +170,7 @@ data OutputWitness
       (Maybe DatumWitness)
 
 derive instance Generic OutputWitness _
+derive instance Eq OutputWitness
 instance Show OutputWitness where
   show = genericShow
 
@@ -177,6 +187,7 @@ data CredentialWitness
   = NativeScriptCredential (ScriptWitness NativeScript)
   | PlutusScriptCredential (ScriptWitness PlutusScript) RedeemerDatum
 
+derive instance Eq CredentialWitness
 derive instance Generic CredentialWitness _
 instance Show CredentialWitness where
   show = genericShow
@@ -192,6 +203,7 @@ data ScriptWitness a
   | ScriptReference TransactionInput RefInputAction
 
 derive instance Show a => Generic (ScriptWitness a) _
+derive instance Eq a => Eq (ScriptWitness a)
 instance Show a => Show (ScriptWitness a) where
   show = genericShow
 
@@ -235,7 +247,7 @@ instance Show StakeWitness where
 type Context =
   { transaction :: Transaction
   , redeemers :: Array DetachedRedeemer
-  , networkId :: NetworkId
+  , networkId :: Maybe NetworkId
   }
 
 _transaction
@@ -275,15 +287,19 @@ explainCredentialAction (Minting _) = "This mint"
 data TxBuildError
   = WrongSpendWitnessType TransactionUnspentOutput
   | IncorrectDatumHash TransactionUnspentOutput PlutusData DataHash
+  | IncorrectScriptHash (Either NativeScript PlutusScript) ScriptHash
   | WrongOutputType ExpectedWitnessType TransactionUnspentOutput
   | WrongStakeCredentialType CredentialAction ExpectedWitnessType
       StakeCredential
   | DatumWitnessNotProvided TransactionUnspentOutput
   | UnneededDatumWitness TransactionUnspentOutput DatumWitness
+  | UnneededDeregisterWitness StakeCredential CredentialWitness
   | UnableToAddMints Mint Mint
-  | RedeemerIndexingError
-  | WrongNetworkId
+  | RedeemerIndexingError Redeemer
+  | RedeemerIndexingInternalError Transaction (Array TransactionBuilderStep)
+  | WrongNetworkId Address
   | ScriptHashAddressAndNoDatum TransactionOutput
+  | NoTransactionNetworkId
 
 derive instance Generic TxBuildError _
 derive instance Eq TxBuildError
@@ -303,6 +319,10 @@ explainTxBuildError (IncorrectDatumHash utxo datum datumHash) =
     <> byteArrayToHex (unwrap $ encodeCbor datumHash)
     <> "\n  UTxO: "
     <> show utxo
+explainTxBuildError (IncorrectScriptHash (Left nativeScript) hash) =
+  "Provided script hash (" <> show hash <> ") does not match the provided native script (" <> show nativeScript <> ")"
+explainTxBuildError (IncorrectScriptHash (Right plutusScript) hash) =
+  "Provided script hash (" <> show hash <> ") does not match the provided Plutus script (" <> show plutusScript <> ")"
 explainTxBuildError (WrongOutputType ScriptHashWitness utxo) =
   "The UTxO you provided requires no witness, because the payment credential of the address is a `PubKeyHash`. UTxO: " <> show
     utxo
@@ -311,7 +331,7 @@ explainTxBuildError (WrongOutputType PubKeyHashWitness utxo) =
     show utxo
 explainTxBuildError
   (WrongStakeCredentialType operation expWitnessType stakeCredential) =
-  explainCredentialAction operation <> " requires a "
+  explainCredentialAction operation <> " (" <> show operation <> ") requires a "
     <> explainExpectedWitnessType expWitnessType
     <> " witness: "
     <> show stakeCredential
@@ -323,13 +343,20 @@ explainTxBuildError (UnneededDatumWitness utxo witness) =
     <> show witness
     <> " for the UTxO: "
     <> show utxo
+explainTxBuildError (UnneededDeregisterWitness stakeCredential witness) =
+  "You've provided an optional `CredentialWitness`, but the stake credential you are trying to issue a deregistering certificate for is a PubKeyHash credential. You should omit the provided credential witness for this credential: " <> show stakeCredential <> ". Provided witness: " <> show witness
 explainTxBuildError (UnableToAddMints a b) =
   "Numeric overflow: unable to add `Mint`s: " <> show a <> " and " <> show b
-explainTxBuildError RedeemerIndexingError =
-  "Redeemer indexing error. Please report as bug: " <> bugTrackerUrl
-explainTxBuildError WrongNetworkId = "Wrong network ID"
+explainTxBuildError (RedeemerIndexingError redeemer) =
+  "Redeemer indexing error. Problematic redeemer that does not have a valid index: " <> show redeemer
+explainTxBuildError (RedeemerIndexingInternalError tx steps) =
+  "Internal redeemer indexing error. Please report as bug: " <> bugTrackerUrl <> "\nDebug info: Transaction: " <> show tx <> ", steps: " <> show steps
+explainTxBuildError (WrongNetworkId address) =
+  "The following `Address` that was specified in one of the UTxOs has a `NetworkId` different from the one `TransactionBody` has: " <> show address
 explainTxBuildError (ScriptHashAddressAndNoDatum output) =
   "A `ScriptHash` address output was provided without a datum. Such outputs are not spendable. Output: " <> show output
+explainTxBuildError NoTransactionNetworkId =
+  "You are editing a transaction without a `NetworkId` set. To create a `RewardAddress`, a NetworkId is needed: set it in the `TransactionBody`"
 
 type BuilderM a = StateT Context (Except TxBuildError) a
 
@@ -337,23 +364,26 @@ buildTransaction
   :: NetworkId
   -> Array TransactionBuilderStep
   -> Either TxBuildError Transaction
-buildTransaction networkId steps =
+buildTransaction networkId =
+  modifyTransaction (Transaction.empty # _body <<< _networkId .~ Just networkId)
+
+modifyTransaction
+  :: Transaction
+  -> Array TransactionBuilderStep
+  -> Either TxBuildError Transaction
+modifyTransaction tx steps = do
+  context <- do
+    editableTransaction <- lmap RedeemerIndexingError $ toEditableTransactionSafe tx
+    pure $ merge editableTransaction
+      { networkId: editableTransaction.transaction ^. _body <<< _networkId }
   let
-    context =
-      { transaction: Transaction.empty
-      , redeemers: []
-      , networkId
-      }
-    extract { transaction, redeemers } =
-      { transaction, redeemers }
-    eiCtx = map (snd >>> extract)
+    eiCtx = map snd
       $ runExcept
       $ flip runStateT context
       $ processConstraints steps
-  in
-    eiCtx >>= \({ redeemers, transaction }) ->
-      note RedeemerIndexingError $
-        fromEditableTransactionSafe { redeemers, transaction }
+  eiCtx >>= \({ redeemers, transaction }) ->
+    note (RedeemerIndexingInternalError tx steps) $
+      fromEditableTransactionSafe { redeemers, transaction }
 
 processConstraints :: Array TransactionBuilderStep -> BuilderM Unit
 processConstraints = traverse_ processConstraint
@@ -381,6 +411,10 @@ processConstraint = case _ of
   RegisterStake stakeCredential -> do
     _transaction <<< _body <<< _certs %= pushUnique
       (StakeRegistration stakeCredential)
+  DeregisterStake stakeCredential mbCredentialWitness -> do
+    _transaction <<< _body <<< _certs %= pushUnique
+      (StakeDeregistration stakeCredential)
+    useDeregisterWitness stakeCredential mbCredentialWitness
   IssueCertificate cert witness -> do
     useCertificateWitness cert witness
   WithdrawStake stakeCredential amount witness -> do
@@ -406,11 +440,14 @@ processConstraint = case _ of
 
 assertNetworkId :: Address -> BuilderM Unit
 assertNetworkId addr = do
-  networkId <- gets _.networkId
+  mbNetworkId <- gets _.networkId
   let
     addrNetworkId = getNetworkId addr
-  unless (networkId == addrNetworkId) do
-    throwError WrongNetworkId
+  case mbNetworkId of
+    Nothing -> pure unit
+    Just networkId -> do
+      unless (networkId == addrNetworkId) do
+        throwError (WrongNetworkId addr)
 
 assertOutputType :: ExpectedWitnessType -> TransactionUnspentOutput -> BuilderM Unit
 assertOutputType outputType utxo = do
@@ -439,8 +476,10 @@ assertStakeCredentialType action expectedType credential = do
 useMintAssetWitness
   :: ScriptHash -> AssetName -> Int.Int -> CredentialWitness -> BuilderM Unit
 useMintAssetWitness scriptHash assetName amount witness = do
-  useCredentialWitness (Minting scriptHash)
-    (wrap $ ScriptHashCredential scriptHash) $ Just witness
+  useCredentialWitness
+    (Minting scriptHash)
+    (wrap $ ScriptHashCredential scriptHash)
+    (Just witness)
   mbMint <- gets $ view $ _transaction <<< _body <<< _mint
   let
     thisMint = Mint.singleton scriptHash assetName amount
@@ -449,6 +488,33 @@ useMintAssetWitness scriptHash assetName amount witness = do
     Just mint -> Mint.union mint thisMint #
       maybe (throwError $ UnableToAddMints mint thisMint) pure
   modify_ $ _transaction <<< _body <<< _mint .~ Just newMint
+
+useDeregisterWitness
+  :: StakeCredential -> Maybe CredentialWitness -> BuilderM Unit
+useDeregisterWitness cred mbWitness = do
+  let cert = StakeDeregistration cred
+  case cred, mbWitness of
+    StakeCredential (PubKeyHashCredential _), Just witness ->
+      throwError $ UnneededDeregisterWitness cred witness
+    StakeCredential (ScriptHashCredential _), Nothing ->
+      throwError $ WrongStakeCredentialType (StakeCert cert) PubKeyHashWitness cred
+    StakeCredential (ScriptHashCredential scriptHash), Just witness -> do
+      assertScriptHashMatchesCredentialWitness scriptHash witness
+      useCredentialWitness (StakeCert cert) cred $ Just witness
+    _, _ -> pure unit
+  _transaction <<< _body <<< _certs %= pushUnique cert
+
+assertScriptHashMatchesCredentialWitness :: ScriptHash -> CredentialWitness -> BuilderM Unit
+assertScriptHashMatchesCredentialWitness scriptHash witness = do
+  let
+    mbScript = case witness of
+      PlutusScriptCredential (ScriptValue plutusScript) _ -> Just (Right plutusScript)
+      NativeScriptCredential (ScriptValue nativeScript) -> Just (Left nativeScript)
+      _ -> Nothing
+  for_ mbScript \eiScript -> do
+    let hash = either NativeScript.hash PlutusScript.hash eiScript
+    unless (scriptHash == hash) do
+      throwError $ IncorrectScriptHash eiScript scriptHash
 
 useCertificateWitness :: Certificate -> Maybe CredentialWitness -> BuilderM Unit
 useCertificateWitness cert witness = do
@@ -485,6 +551,7 @@ useCredentialWitness credentialAction stakeCredential witness = do
               Withdrawal rewardAddress -> ForReward rewardAddress
               StakeCert cert -> ForCert cert
               Minting scriptHash -> ForMint scriptHash
+          -- ForSpend is not possible: for that we use OutputWitness
           , datum: redeemerDatum
           }
       _redeemers %= pushUnique redeemer
@@ -492,7 +559,8 @@ useCredentialWitness credentialAction stakeCredential witness = do
 useWithdrawRewardsWitness
   :: StakeCredential -> Coin -> Maybe CredentialWitness -> BuilderM Unit
 useWithdrawRewardsWitness stakeCredential amount witness = do
-  networkId <- gets _.networkId
+  networkId <- gets _.networkId >>=
+    maybe (throwError NoTransactionNetworkId) pure
   let
     rewardAddress =
       { networkId
@@ -576,7 +644,14 @@ useDatumWitnessForUtxo utxo mbDatumWitness = do
         -- otherwise, fail
         Just (DatumValue providedDatum) -> do
           throwError $ IncorrectDatumHash utxo providedDatum datumHash
-        -- if a reference input is provided, we just attach it.
+        -- If a reference input is provided, we just attach it without
+        -- checking (doing that would require looking up the utxo)
+        --
+        -- We COULD require the user to provide the output to do an additional
+        -- check, but we don't, because otherwise the contents of the ref output
+        -- do not matter (i.e. they are not needed for balancing).
+        -- UTxO lookups are quite expensive, so it's best to not require more
+        -- of them than strictly necessary.
         Just (DatumReference datumWitnessRef refInputAction) -> do
           _transaction <<< _body <<< refInputActionToLens refInputAction
             %= pushUnique datumWitnessRef
