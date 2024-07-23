@@ -6,14 +6,6 @@ module Cardano.Transaction.Builder
       , RegisterStake
       , IssueCertificate
       , WithdrawStake
-      , DeregisterStake
-      , RequireSignature
-      , RegisterPool
-      , RetirePool
-      , IncludeDatum
-      , SetTTL
-      , SetValidityStartInterval
-      , SetIsValid
       )
   , OutputWitness(NativeScriptOutput, PlutusScriptOutput)
   , CredentialWitness(NativeScriptCredential, PlutusScriptCredential)
@@ -61,32 +53,24 @@ import Cardano.Types
   , AssetName
   , Coin
   , DataHash
-  , Epoch
   , Mint
   , NativeScript
   , NetworkId
   , PaymentCredential(PaymentCredential)
-  , PaymentPubKeyHash
   , PlutusData
   , PlutusScript
-  , PoolParams
-  , PoolPubKeyHash
   , Redeemer
   , RewardAddress
-  , Slot
   , StakeCredential(StakeCredential)
   , Transaction
   , TransactionBody
   , _certs
   , _inputs
   , _mint
+  , _networkId
   , _outputs
   , _referenceInputs
-  , _requiredSigners
-  , _ttl
-  , _validityStartInterval
   , _withdrawals
-  , _networkId
   )
 import Cardano.Types.Address (getNetworkId, getPaymentCredential)
 import Cardano.Types.Certificate
@@ -114,7 +98,7 @@ import Cardano.Types.RedeemerDatum (RedeemerDatum)
 import Cardano.Types.ScriptHash (ScriptHash)
 import Cardano.Types.StakeCredential (StakeCredential)
 import Cardano.Types.StakePubKeyHash (StakePubKeyHash)
-import Cardano.Types.Transaction (_body, _isValid, _witnessSet)
+import Cardano.Types.Transaction (_body, _witnessSet)
 import Cardano.Types.Transaction as Transaction
 import Cardano.Types.TransactionInput (TransactionInput)
 import Cardano.Types.TransactionOutput (TransactionOutput, _address, _datum)
@@ -129,7 +113,7 @@ import Data.Bifunctor (lmap)
 import Data.ByteArray (byteArrayToHex)
 import Data.Either (Either(Left, Right), either, note)
 import Data.Generic.Rep (class Generic)
-import Data.Lens (Lens', view, (%=), (.=), (.~), (<>=), (^.))
+import Data.Lens (Lens', view, (%=), (.~), (^.))
 import Data.Lens.Record (prop)
 import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), isJust, maybe)
@@ -145,16 +129,8 @@ data TransactionBuilderStep
   | Pay TransactionOutput
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
   | RegisterStake StakeCredential
-  | DeregisterStake StakeCredential (Maybe CredentialWitness)
   | IssueCertificate Certificate (Maybe CredentialWitness)
   | WithdrawStake StakeCredential Coin (Maybe CredentialWitness)
-  | RequireSignature PaymentPubKeyHash
-  | RegisterPool PoolParams
-  | RetirePool PoolPubKeyHash Epoch
-  | IncludeDatum PlutusData
-  | SetTTL (Maybe Slot)
-  | SetValidityStartInterval (Maybe Slot)
-  | SetIsValid Boolean
 
 derive instance Generic TransactionBuilderStep _
 derive instance Eq TransactionBuilderStep
@@ -390,7 +366,6 @@ processConstraints = traverse_ processConstraint
 
 processConstraint :: TransactionBuilderStep -> BuilderM Unit
 processConstraint = case _ of
-  -- TODO: check network ID
   SpendOutput utxo spendWitness -> do
     assertNetworkId $ utxo ^. _output <<< _address
     _transaction <<< _body <<< _inputs
@@ -411,32 +386,10 @@ processConstraint = case _ of
   RegisterStake stakeCredential -> do
     _transaction <<< _body <<< _certs %= pushUnique
       (StakeRegistration stakeCredential)
-  DeregisterStake stakeCredential mbCredentialWitness -> do
-    _transaction <<< _body <<< _certs %= pushUnique
-      (StakeDeregistration stakeCredential)
-    useDeregisterWitness stakeCredential mbCredentialWitness
   IssueCertificate cert witness -> do
     useCertificateWitness cert witness
   WithdrawStake stakeCredential amount witness -> do
     useWithdrawRewardsWitness stakeCredential amount witness
-  RequireSignature ppkh -> do
-    _transaction <<< _body <<< _requiredSigners <>=
-      [ wrap $ unwrap $ unwrap ppkh ]
-  RegisterPool poolParams -> do
-    _transaction <<< _body <<< _certs %= pushUnique
-      (PoolRegistration poolParams)
-  RetirePool poolKeyHash epoch -> do
-    _transaction <<< _body <<< _certs %= pushUnique
-      (PoolRetirement { poolKeyHash, epoch })
-  IncludeDatum datum -> do
-    _transaction <<< _witnessSet <<< _plutusData
-      %= pushUnique datum
-  SetTTL slot -> do
-    _transaction <<< _body <<< _ttl .= slot
-  SetValidityStartInterval slot -> do
-    _transaction <<< _body <<< _validityStartInterval .= slot
-  SetIsValid isValid -> do
-    _transaction <<< _isValid .= isValid
 
 assertNetworkId :: Address -> BuilderM Unit
 assertNetworkId addr = do
@@ -489,21 +442,6 @@ useMintAssetWitness scriptHash assetName amount witness = do
       maybe (throwError $ UnableToAddMints mint thisMint) pure
   modify_ $ _transaction <<< _body <<< _mint .~ Just newMint
 
-useDeregisterWitness
-  :: StakeCredential -> Maybe CredentialWitness -> BuilderM Unit
-useDeregisterWitness cred mbWitness = do
-  let cert = StakeDeregistration cred
-  case cred, mbWitness of
-    StakeCredential (PubKeyHashCredential _), Just witness ->
-      throwError $ UnneededDeregisterWitness cred witness
-    StakeCredential (ScriptHashCredential _), Nothing ->
-      throwError $ WrongStakeCredentialType (StakeCert cert) PubKeyHashWitness cred
-    StakeCredential (ScriptHashCredential scriptHash), Just witness -> do
-      assertScriptHashMatchesCredentialWitness scriptHash witness
-      useCredentialWitness (StakeCert cert) cred $ Just witness
-    _, _ -> pure unit
-  _transaction <<< _body <<< _certs %= pushUnique cert
-
 assertScriptHashMatchesCredentialWitness :: ScriptHash -> CredentialWitness -> BuilderM Unit
 assertScriptHashMatchesCredentialWitness scriptHash witness = do
   let
@@ -517,13 +455,22 @@ assertScriptHashMatchesCredentialWitness scriptHash witness = do
       throwError $ IncorrectScriptHash eiScript scriptHash
 
 useCertificateWitness :: Certificate -> Maybe CredentialWitness -> BuilderM Unit
-useCertificateWitness cert witness = do
+useCertificateWitness cert mbWitness = do
   _transaction <<< _body <<< _certs %= pushUnique cert
   case cert of
     StakeDeregistration stakeCredential -> do
-      useCredentialWitness (StakeCert cert) stakeCredential witness
+      case stakeCredential, mbWitness of
+        StakeCredential (PubKeyHashCredential _), Just witness -> do
+          throwError $ UnneededDeregisterWitness stakeCredential witness
+        StakeCredential (PubKeyHashCredential _), Nothing -> pure unit
+        StakeCredential (ScriptHashCredential _), Nothing -> do
+          throwError $
+            WrongStakeCredentialType (StakeCert cert) PubKeyHashWitness stakeCredential
+        StakeCredential (ScriptHashCredential scriptHash), Just witness -> do
+          assertScriptHashMatchesCredentialWitness scriptHash witness
+      useCredentialWitness (StakeCert cert) stakeCredential mbWitness
     StakeDelegation stakeCredential _ -> do
-      useCredentialWitness (StakeCert cert) stakeCredential witness
+      useCredentialWitness (StakeCert cert) stakeCredential mbWitness
     StakeRegistration _ -> pure unit
     PoolRegistration _ -> pure unit
     PoolRetirement _ -> pure unit

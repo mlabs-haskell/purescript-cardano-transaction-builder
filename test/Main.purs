@@ -9,8 +9,13 @@ import Cardano.Transaction.Builder
   , OutputWitness(PlutusScriptOutput, NativeScriptOutput)
   , RefInputAction(SpendInput)
   , ScriptWitness(ScriptValue, ScriptReference)
-  , TransactionBuilderStep(DeregisterStake, Pay, SpendOutput)
-  , TxBuildError(UnneededDeregisterWitness, WrongNetworkId, WrongOutputType)
+  , TransactionBuilderStep(IssueCertificate, Pay, SpendOutput)
+  , TxBuildError
+      ( UnneededDeregisterWitness
+      , WrongNetworkId
+      , IncorrectScriptHash
+      , WrongOutputType
+      )
   , buildTransaction
   )
 import Cardano.Transaction.Edit (editTransaction, editTransactionSafe)
@@ -259,7 +264,8 @@ builderTests = group "Cardano.Transaction.Builder" do
       mainnetTransaction # _body <<< _outputs .~ [ pkhOutput ]
   group "Deregister" do
     testBuilderSteps "Deregister script"
-      [ DeregisterStake (wrap $ ScriptHashCredential $ PlutusScript.hash script1)
+      [ IssueCertificate
+          (StakeDeregistration (wrap $ ScriptHashCredential $ PlutusScript.hash script1))
           $ Just
           $ PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
       ] $
@@ -282,8 +288,14 @@ builderTests = group "Cardano.Transaction.Builder" do
         witness =
           PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
       testBuilderStepsFail "deregistering stake credential with unneeded witness fails"
-        [ DeregisterStake (wrap $ pubKeyHashCredential1) $ Just witness ] $
+        [ IssueCertificate (StakeDeregistration $ wrap $ pubKeyHashCredential1) $ Just witness ] $
         UnneededDeregisterWitness (wrap $ pubKeyHashCredential1) witness
+    testBuilderStepsFail "deregistering stake credential with wrong witness fails"
+      [ IssueCertificate (StakeDeregistration $ wrap $ ScriptHashCredential $ PlutusScript.hash script2)
+          $ Just
+          $ PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
+      ] $
+      IncorrectScriptHash (Right script1) (PlutusScript.hash script2)
 
 testBuilderStepsFail
   :: String
@@ -410,6 +422,9 @@ input2 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b7
 
 script1 :: PlutusScript
 script1 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4e4d01000033222220051200120011"
+
+script2 :: PlutusScript
+script2 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4e4d01000033222220051200120012"
 
 mainnetTransaction :: Transaction
 mainnetTransaction = Transaction.empty # _body <<< _networkId .~ Just MainnetId
