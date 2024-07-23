@@ -10,8 +10,7 @@ Here's a short overview of the interface to give an impression of how it works:
 
 ```purescript
 buildTransaction
-  :: NetworkId
-  -> Array TransactionBuilderStep
+  :: Array TransactionBuilderStep
   -> Either TxBuildError Transaction
 
 data TransactionBuilderStep

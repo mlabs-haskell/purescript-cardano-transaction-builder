@@ -331,11 +331,10 @@ explainTxBuildError NoTransactionNetworkId =
 type BuilderM a = StateT Context (Except TxBuildError) a
 
 buildTransaction
-  :: NetworkId
-  -> Array TransactionBuilderStep
+  :: Array TransactionBuilderStep
   -> Either TxBuildError Transaction
-buildTransaction networkId =
-  modifyTransaction (Transaction.empty # _body <<< _networkId .~ Just networkId)
+buildTransaction =
+  modifyTransaction Transaction.empty
 
 modifyTransaction
   :: Transaction
