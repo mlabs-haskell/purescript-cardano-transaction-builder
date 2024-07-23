@@ -3,9 +3,8 @@ module Cardano.Transaction.Builder
       ( SpendOutput
       , Pay
       , MintAsset
-      , RegisterStake
       , IssueCertificate
-      , WithdrawStake
+      , WithdrawRewards
       )
   , OutputWitness(NativeScriptOutput, PlutusScriptOutput)
   , CredentialWitness(NativeScriptCredential, PlutusScriptCredential)
@@ -25,7 +24,6 @@ module Cardano.Transaction.Builder
       , RedeemerIndexingError
       , RedeemerIndexingInternalError
       , WrongNetworkId
-      , ScriptHashAddressAndNoDatum
       , NoTransactionNetworkId
       )
   , ExpectedWitnessType(ScriptHashWitness, PubKeyHashWitness)
@@ -128,9 +126,8 @@ data TransactionBuilderStep
   = SpendOutput TransactionUnspentOutput (Maybe OutputWitness)
   | Pay TransactionOutput
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
-  | RegisterStake StakeCredential
   | IssueCertificate Certificate (Maybe CredentialWitness)
-  | WithdrawStake StakeCredential Coin (Maybe CredentialWitness)
+  | WithdrawRewards StakeCredential Coin (Maybe CredentialWitness)
 
 derive instance Generic TransactionBuilderStep _
 derive instance Eq TransactionBuilderStep
@@ -274,7 +271,6 @@ data TxBuildError
   | RedeemerIndexingError Redeemer
   | RedeemerIndexingInternalError Transaction (Array TransactionBuilderStep)
   | WrongNetworkId Address
-  | ScriptHashAddressAndNoDatum TransactionOutput
   | NoTransactionNetworkId
 
 derive instance Generic TxBuildError _
@@ -329,8 +325,6 @@ explainTxBuildError (RedeemerIndexingInternalError tx steps) =
   "Internal redeemer indexing error. Please report as bug: " <> bugTrackerUrl <> "\nDebug info: Transaction: " <> show tx <> ", steps: " <> show steps
 explainTxBuildError (WrongNetworkId address) =
   "The following `Address` that was specified in one of the UTxOs has a `NetworkId` different from the one `TransactionBody` has: " <> show address
-explainTxBuildError (ScriptHashAddressAndNoDatum output) =
-  "A `ScriptHash` address output was provided without a datum. Such outputs are not spendable. Output: " <> show output
 explainTxBuildError NoTransactionNetworkId =
   "You are editing a transaction without a `NetworkId` set. To create a `RewardAddress`, a NetworkId is needed: set it in the `TransactionBody`"
 
@@ -373,22 +367,15 @@ processConstraint = case _ of
     useSpendWitness utxo spendWitness
   Pay output -> do
     assertNetworkId $ output ^. _address
-    case getPaymentCredential (output ^. _address), output ^. _datum of
-      Just (PaymentCredential (ScriptHashCredential _)), Nothing -> do
-        throwError $ ScriptHashAddressAndNoDatum output
-      _, _ -> pure unit
     _transaction <<< _body <<< _outputs
       -- intentionally not using pushUnique: we can
       -- create multiple outputs of the same shape
       %= flip append [ output ]
   MintAsset scriptHash assetName amount mintWitness -> do
     useMintAssetWitness scriptHash assetName amount mintWitness
-  RegisterStake stakeCredential -> do
-    _transaction <<< _body <<< _certs %= pushUnique
-      (StakeRegistration stakeCredential)
   IssueCertificate cert witness -> do
     useCertificateWitness cert witness
-  WithdrawStake stakeCredential amount witness -> do
+  WithdrawRewards stakeCredential amount witness -> do
     useWithdrawRewardsWitness stakeCredential amount witness
 
 assertNetworkId :: Address -> BuilderM Unit

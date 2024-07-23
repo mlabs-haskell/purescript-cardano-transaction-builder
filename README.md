@@ -18,7 +18,8 @@ data TransactionBuilderStep
   = SpendOutput TransactionUnspentOutput (Maybe OutputWitness)
   | Pay TransactionOutput
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
-  | ...
+  | IssueCertificate Certificate (Maybe CredentialWitness)
+  | WithdrawRewards StakeCredential Coin (Maybe CredentialWitness)
 
 data OutputWitness
   = NativeScriptOutput (ScriptWitness NativeScript)
