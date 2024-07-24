@@ -17,6 +17,7 @@ import Cardano.Transaction.Builder
       , WrongOutputType
       )
   , buildTransaction
+  , modifyTransaction
   )
 import Cardano.Transaction.Edit (editTransaction, editTransactionSafe)
 import Cardano.Types
@@ -81,7 +82,7 @@ suite = do
 editorTests :: TestPlanM (Aff Unit) Unit
 editorTests = group "Cardano.Transaction.Edit" do
   let
-    oneInput = mainnetTransaction
+    oneInput = anyNetworkTx
       # _witnessSet <<< _redeemers .~
           [ Redeemer
               { index: BigNum.zero
@@ -97,7 +98,7 @@ editorTests = group "Cardano.Transaction.Edit" do
       editTransaction identity oneInput `shouldEqual` oneInput
     test "attach one input to the end" do
       let
-        tx' = mainnetTransaction
+        tx' = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.zero
@@ -112,7 +113,7 @@ editorTests = group "Cardano.Transaction.Edit" do
         `shouldEqual` tx'
     test "remove two inputs, before and after" do
       let
-        tx = mainnetTransaction
+        tx = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.one
@@ -122,7 +123,7 @@ editorTests = group "Cardano.Transaction.Edit" do
                   }
               ]
           # _body <<< _inputs .~ [ input0, input1, input2 ]
-        tx' = mainnetTransaction
+        tx' = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.zero
@@ -137,7 +138,7 @@ editorTests = group "Cardano.Transaction.Edit" do
         `shouldEqual` pure tx'
     test "remove two inputs with redeemers, before and after" do
       let
-        tx = mainnetTransaction
+        tx = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.zero
@@ -159,7 +160,7 @@ editorTests = group "Cardano.Transaction.Edit" do
                   }
               ]
           # _body <<< _inputs .~ [ input0, input1, input2 ]
-        tx' = mainnetTransaction
+        tx' = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.zero
@@ -174,7 +175,7 @@ editorTests = group "Cardano.Transaction.Edit" do
         `shouldEqual` pure tx'
     test "remove input & redeemer, add another input & redeemer" do
       let
-        tx = mainnetTransaction
+        tx = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               [ Redeemer
                   { index: BigNum.zero
@@ -190,7 +191,7 @@ editorTests = group "Cardano.Transaction.Edit" do
                   }
               ]
           # _body <<< _inputs .~ [ input1, input2 ]
-        tx' = mainnetTransaction
+        tx' = anyNetworkTx
           # _witnessSet <<< _redeemers .~
               -- order is swapped because of `nub`...
               [ Redeemer
@@ -236,10 +237,10 @@ builderTests = group "Cardano.Transaction.Builder" do
       PlutusScriptOutput (ScriptReference input1 SpendInput) RedeemerDatum.unit Nothing
   group "SpendOutput" do
     testBuilderSteps "PKH output" [ SpendOutput pkhUtxo Nothing ] $
-      mainnetTransaction # _body <<< _inputs .~ [ input1 ]
+      anyNetworkTx # _body <<< _inputs .~ [ input1 ]
     testBuilderSteps "PKH output x2 -> 1"
       [ SpendOutput pkhUtxo Nothing, SpendOutput pkhUtxo Nothing ] $
-      mainnetTransaction # _body <<< _inputs .~ [ input1 ]
+      anyNetworkTx # _body <<< _inputs .~ [ input1 ]
     testBuilderStepsFail "PKH output with wrong witness"
       [ SpendOutput pkhUtxo (Just nsWitness) ] $
       WrongOutputType ScriptHashWitness pkhUtxo
@@ -252,16 +253,16 @@ builderTests = group "Cardano.Transaction.Builder" do
     test "PKH output with wrong NetworkId" do
       let
         result =
-          buildTransaction TestnetId
+          modifyTransaction testnetTransaction
             [ SpendOutput pkhUtxo Nothing ]
       result `shouldEqual`
         Left (WrongNetworkId $ pkhUtxo ^. _output <<< _address)
   group "Pay" do
     testBuilderSteps "#1" [ Pay pkhOutput ] $
-      mainnetTransaction # _body <<< _outputs .~ [ pkhOutput ]
+      anyNetworkTx # _body <<< _outputs .~ [ pkhOutput ]
   group "MintAsset" do
     testBuilderSteps "#1" [ Pay pkhOutput ] $
-      mainnetTransaction # _body <<< _outputs .~ [ pkhOutput ]
+      anyNetworkTx # _body <<< _outputs .~ [ pkhOutput ]
   group "Deregister" do
     testBuilderSteps "Deregister script"
       [ IssueCertificate
@@ -269,7 +270,7 @@ builderTests = group "Cardano.Transaction.Builder" do
           $ Just
           $ PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
       ] $
-      mainnetTransaction
+      anyNetworkTx
         # _witnessSet <<< _plutusScripts .~ [ script1 ]
         # _witnessSet <<< _redeemers .~
             [ Redeemer
@@ -304,7 +305,7 @@ testBuilderStepsFail
   -> TestPlanM (Aff Unit) Unit
 testBuilderStepsFail label steps err = test label do
   let
-    result = buildTransaction MainnetId steps
+    result = buildTransaction steps
   result `shouldEqual` Left err
 
 testBuilderSteps
@@ -314,7 +315,7 @@ testBuilderSteps
   -> TestPlanM (Aff Unit) Unit
 testBuilderSteps label steps expected = test label do
   let
-    result = buildTransaction MainnetId steps
+    result = buildTransaction steps
   result `shouldEqual` Right expected
 
 pkhOutput :: TransactionOutput
@@ -426,5 +427,8 @@ script1 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4
 script2 :: PlutusScript
 script2 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4e4d01000033222220051200120012"
 
-mainnetTransaction :: Transaction
-mainnetTransaction = Transaction.empty # _body <<< _networkId .~ Just MainnetId
+anyNetworkTx :: Transaction
+anyNetworkTx = Transaction.empty
+
+testnetTransaction :: Transaction
+testnetTransaction = Transaction.empty # _body <<< _networkId .~ Just TestnetId
