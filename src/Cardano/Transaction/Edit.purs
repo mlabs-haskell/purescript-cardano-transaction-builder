@@ -23,7 +23,7 @@ module Cardano.Transaction.Edit
   , toEditableTransaction
   , fromEditableTransactionSafe
   , fromEditableTransaction
-  , RedeemerPurpose(ForSpend, ForMint, ForReward, ForCert)
+  , RedeemerPurpose(ForSpend, ForMint, ForReward, ForCert, ForPropose, ForVote)
   , redeemerPurposeToRedeemerTag
   , DetachedRedeemer
   , EditableTransaction
@@ -36,21 +36,12 @@ module Cardano.Transaction.Edit
 
 import Prelude
 
-import Cardano.Types
-  ( Certificate
-  , Redeemer(Redeemer)
-  , RedeemerTag(Mint, Spend, Reward, Cert)
-  , RewardAddress
-  , ScriptHash
-  , Transaction(Transaction)
-  , TransactionBody(TransactionBody)
-  , TransactionInput
-  , _redeemers
-  , _witnessSet
-  )
+import Cardano.Types (Certificate, Redeemer(Redeemer), RedeemerTag(Mint, Spend, Reward, Cert, Propose, Vote), RewardAddress, ScriptHash, Transaction(Transaction), TransactionBody(TransactionBody), TransactionInput, _redeemers, _witnessSet)
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.ExUnits as ExUnits
 import Cardano.Types.RedeemerDatum (RedeemerDatum)
+import Cardano.Types.Voter (Voter)
+import Cardano.Types.VotingProposal (VotingProposal)
 import Data.Array (catMaybes, findIndex, nub)
 import Data.Array as Array
 import Data.Either (Either, blush, hush, note)
@@ -80,6 +71,8 @@ data RedeemerPurpose
   | ForMint ScriptHash
   | ForReward RewardAddress
   | ForCert Certificate
+  | ForVote Voter
+  | ForPropose VotingProposal
 
 derive instance Generic RedeemerPurpose _
 derive instance Eq RedeemerPurpose
@@ -95,6 +88,8 @@ redeemerPurposeToRedeemerTag = case _ of
   ForMint _ -> Mint
   ForReward _ -> Reward
   ForCert _ -> Cert
+  ForPropose _ -> Propose
+  ForVote _ -> Vote
 
 -- | Contains parts of a transaction that are important for redeemer processing.
 -- | Used to avoid re-computing.
@@ -103,18 +98,21 @@ type RedeemersContext =
   , mintingPolicyHashes :: Array ScriptHash
   , rewardAddresses :: Array RewardAddress
   , certs :: Array Certificate
+  , proposals :: Array VotingProposal
+  , voters :: Array Voter
   }
 
 mkRedeemersContext :: Transaction -> RedeemersContext
-mkRedeemersContext
-  (Transaction { body: TransactionBody { inputs, mint, withdrawals, certs } }) =
-  { inputs: Set.toUnfoldable $ Set.fromFoldable inputs
+mkRedeemersContext (Transaction { body: TransactionBody txBody }) =
+  { inputs: Set.toUnfoldable $ Set.fromFoldable txBody.inputs
   , mintingPolicyHashes:
       Set.toUnfoldable $ Map.keys $ unwrap $ fromMaybe
         (wrap Map.empty)
-        mint
-  , rewardAddresses: Set.toUnfoldable $ Map.keys $ withdrawals
-  , certs
+        txBody.mint
+  , rewardAddresses: Set.toUnfoldable $ Map.keys $ txBody.withdrawals
+  , certs: txBody.certs
+  , proposals: txBody.votingProposals
+  , voters: Set.toUnfoldable $ Map.keys $ unwrap txBody.votingProcedures
   }
 
 detachRedeemer :: RedeemersContext -> Redeemer -> Maybe DetachedRedeemer
@@ -129,6 +127,10 @@ detachRedeemer ctx (Redeemer { tag, index, data: datum, exUnits: _ }) = do
       ForReward <$> Array.index ctx.rewardAddresses indexInt
     Cert ->
       ForCert <$> Array.index ctx.certs indexInt
+    Propose ->
+      ForPropose <$> Array.index ctx.proposals indexInt
+    Vote ->
+      ForVote <$> Array.index ctx.voters indexInt
   pure { datum, purpose }
 
 attachRedeemers
@@ -149,6 +151,10 @@ attachRedeemer ctx { purpose, datum } = do
       { tag: Reward, index }
     ForCert cert -> findIndex (eq cert) ctx.certs <#> \index ->
       { tag: Cert, index }
+    ForPropose proposal -> findIndex (eq proposal) ctx.proposals <#> \index ->
+      { tag: Propose, index }
+    ForVote voter -> findIndex (eq voter) ctx.voters <#> \index ->
+      { tag: Vote, index }
   pure $
     Redeemer { tag, index: BigNum.fromInt index, data: datum, exUnits: ExUnits.empty }
 

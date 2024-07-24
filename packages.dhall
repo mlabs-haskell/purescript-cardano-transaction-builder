@@ -175,19 +175,23 @@ let additions =
           , "argonaut"
           , "bifunctors"
           , "bytearrays"
+          , "console"
           , "effect"
           , "either"
+          , "enums"
           , "maybe"
           , "nullable"
           , "ordered-collections"
+          , "partial"
           , "prelude"
           , "profunctor"
           , "tuples"
+          , "unsafe-coerce"
           ]
         , repo =
             "https://github.com/mlabs-haskell/purescript-cardano-serialization-lib"
-        , version = "c66afbb9c572db096690ec1dd786c9ec96105c0d"
-        }
+        , version = "v1.0.0"
+        }     
       , cardano-plutus-data-schema =
         { dependencies = [ "prelude" ]
         , repo =
@@ -221,14 +225,15 @@ let additions =
       , cardano-types =
         { dependencies =
           [ "aeson"
+          , "aff"
           , "arraybuffer-types"
           , "arrays"
           , "bifunctors"
           , "bytearrays"
           , "cardano-plutus-data-schema"
           , "cardano-serialization-lib"
-          , "console"
           , "control"
+          , "datetime"
           , "effect"
           , "either"
           , "encoding"
@@ -242,6 +247,8 @@ let additions =
           , "literals"
           , "maybe"
           , "monad-logger"
+          , "mote"
+          , "mote-testplan"
           , "newtype"
           , "nonempty"
           , "nullable"
@@ -249,11 +256,12 @@ let additions =
           , "partial"
           , "prelude"
           , "profunctor"
+          , "profunctor-lenses"
           , "quickcheck"
           , "rationals"
           , "record"
           , "safe-coerce"
-          , "strings"
+          , "spec"
           , "these"
           , "tuples"
           , "typelevel-prelude"
@@ -262,7 +270,7 @@ let additions =
           , "unsafe-coerce"
           ]
         , repo = "https://github.com/mlabs-haskell/purescript-cardano-types"
-        , version = "40d9468a4712ad2bf57ebede19fae92208f082a0"
+        , version = "941bf45aa2b91a012873769d252645f9187d685e"
         }
       }
 

@@ -77,9 +77,7 @@ import Cardano.Types.Certificate
       , PoolRegistration
       , PoolRetirement
       , StakeDeregistration
-      , GenesisKeyDelegation
       , StakeDelegation
-      , MoveInstantaneousRewardsCert
       )
   )
 import Cardano.Types.Credential
@@ -460,8 +458,7 @@ useCertificateWitness cert mbWitness = do
     StakeRegistration _ -> pure unit
     PoolRegistration _ -> pure unit
     PoolRetirement _ -> pure unit
-    GenesisKeyDelegation _ -> pure unit
-    MoveInstantaneousRewardsCert _ -> pure unit
+    _ -> pure unit -- TODO
 
 useCredentialWitness
   :: CredentialAction -> StakeCredential -> Maybe CredentialWitness -> BuilderM Unit
