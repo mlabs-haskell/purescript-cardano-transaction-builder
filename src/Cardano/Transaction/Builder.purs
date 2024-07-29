@@ -18,7 +18,7 @@ module Cardano.Transaction.Builder
       , IncorrectDatumHash
       , IncorrectScriptHash
       , WrongOutputType
-      , WrongStakeCredentialType
+      , WrongCredentialType
       , DatumWitnessNotProvided
       , UnneededDatumWitness
       , UnneededDeregisterWitness
@@ -58,7 +58,6 @@ import Cardano.Types
   , Mint
   , NativeScript
   , NetworkId
-  , PaymentCredential(PaymentCredential)
   , PlutusData
   , PlutusScript
   , Redeemer
@@ -131,7 +130,7 @@ import Data.Lens.Record (prop)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), isJust, maybe)
-import Data.Newtype (unwrap, wrap)
+import Data.Newtype (unwrap)
 import Data.Show.Generic (genericShow)
 import Data.Traversable (for_, traverse_)
 import Data.Tuple (snd)
@@ -283,8 +282,7 @@ data TxBuildError
   | IncorrectDatumHash TransactionUnspentOutput PlutusData DataHash
   | IncorrectScriptHash (Either NativeScript PlutusScript) ScriptHash
   | WrongOutputType ExpectedWitnessType TransactionUnspentOutput
-  | WrongStakeCredentialType CredentialAction ExpectedWitnessType
-      StakeCredential
+  | WrongCredentialType CredentialAction ExpectedWitnessType Credential
   | DatumWitnessNotProvided TransactionUnspentOutput
   | UnneededDatumWitness TransactionUnspentOutput DatumWitness
   | UnneededDeregisterWitness StakeCredential CredentialWitness
@@ -331,12 +329,11 @@ explainTxBuildError (WrongOutputType PubKeyHashWitness utxo) =
   "The UTxO you provided requires a `ScriptHash` witness to unlock, because the payment credential of the address is a `ScriptHash`. UTxO: "
     <>
       show utxo
-explainTxBuildError
-  (WrongStakeCredentialType operation expWitnessType stakeCredential) =
+explainTxBuildError (WrongCredentialType operation expWitnessType cred) =
   explainCredentialAction operation <> " (" <> show operation <> ") requires a "
     <> explainExpectedWitnessType expWitnessType
     <> " witness: "
-    <> show stakeCredential
+    <> show cred
 explainTxBuildError (DatumWitnessNotProvided utxo) =
   "The UTxO you are trying to spend contains a datum hash. A matching `DatumWitness` is required. Use `getDatumByHash`. UTxO: "
     <> show utxo
@@ -453,25 +450,25 @@ assertOutputType outputType utxo = do
   unless (isJust mbCredential) do
     throwError $ WrongOutputType outputType utxo
 
-assertStakeCredentialType
-  :: CredentialAction -> ExpectedWitnessType -> StakeCredential -> BuilderM Unit
-assertStakeCredentialType action expectedType credential = do
+assertCredentialType
+  :: CredentialAction -> ExpectedWitnessType -> Credential -> BuilderM Unit
+assertCredentialType action expectedType cred = do
   let
-    mbCredential =
+    mbCred =
       case expectedType of
         ScriptHashWitness ->
-          void $ Credential.asScriptHash $ unwrap credential
+          void $ Credential.asScriptHash cred
         PubKeyHashWitness ->
-          void $ Credential.asPubKeyHash $ unwrap credential
-  unless (isJust mbCredential) do
-    throwError $ WrongStakeCredentialType action expectedType credential
+          void $ Credential.asPubKeyHash cred
+  unless (isJust mbCred) do
+    throwError $ WrongCredentialType action expectedType cred
 
 useMintAssetWitness
   :: ScriptHash -> AssetName -> Int.Int -> CredentialWitness -> BuilderM Unit
 useMintAssetWitness scriptHash assetName amount witness = do
   useCredentialWitness
     (Minting scriptHash)
-    (wrap $ ScriptHashCredential scriptHash)
+    (ScriptHashCredential scriptHash)
     (Just witness)
   mbMint <- gets $ view $ _transaction <<< _body <<< _mint
   let
@@ -507,25 +504,25 @@ useVotingProcedureWitness voter mbWitness = do
         Nothing -> pure cred
     Cc cred -> pure cred
     Drep cred -> pure cred
-  useCredentialWitness (Voting voter) (wrap cred) mbWitness
+  useCredentialWitness (Voting voter) cred mbWitness
 
 useCertificateWitness :: Certificate -> Maybe CredentialWitness -> BuilderM Unit
 useCertificateWitness cert mbWitness =
   case cert of
     StakeDeregistration stakeCredential -> do
+      let cred = unwrap stakeCredential
       case stakeCredential, mbWitness of
         StakeCredential (PubKeyHashCredential _), Just witness ->
           throwError $ UnneededDeregisterWitness stakeCredential witness
         StakeCredential (PubKeyHashCredential _), Nothing -> pure unit
         StakeCredential (ScriptHashCredential _), Nothing ->
-          throwError $
-            WrongStakeCredentialType (StakeCert cert) PubKeyHashWitness
-              stakeCredential
+          throwError $ WrongCredentialType (StakeCert cert) PubKeyHashWitness
+            cred
         StakeCredential (ScriptHashCredential scriptHash), Just witness ->
           assertScriptHashMatchesCredentialWitness scriptHash witness
-      useCredentialWitness (StakeCert cert) stakeCredential mbWitness
+      useCredentialWitness (StakeCert cert) cred mbWitness
     StakeDelegation stakeCredential _ ->
-      useCredentialWitness (StakeCert cert) stakeCredential mbWitness
+      useCredentialWitness (StakeCert cert) (unwrap stakeCredential) mbWitness
     StakeRegistration _ -> pure unit
     PoolRegistration _ -> pure unit
     PoolRetirement _ -> pure unit
@@ -533,25 +530,22 @@ useCertificateWitness cert mbWitness =
 
 useCredentialWitness
   :: CredentialAction
-  -> StakeCredential
+  -> Credential
   -> Maybe CredentialWitness
   -> BuilderM Unit
-useCredentialWitness credentialAction stakeCredential witness =
+useCredentialWitness credAction cred witness =
   case witness of
     Nothing ->
-      assertStakeCredentialType credentialAction PubKeyHashWitness
-        stakeCredential
+      assertCredentialType credAction PubKeyHashWitness cred
     Just (NativeScriptCredential nsWitness) -> do
-      assertStakeCredentialType credentialAction ScriptHashWitness
-        stakeCredential
+      assertCredentialType credAction ScriptHashWitness cred
       useNativeScriptWitness nsWitness
     Just (PlutusScriptCredential plutusScriptWitness redeemerDatum) -> do
-      assertStakeCredentialType credentialAction ScriptHashWitness
-        stakeCredential
+      assertCredentialType credAction ScriptHashWitness cred
       usePlutusScriptWitness plutusScriptWitness
       let
         redeemer =
-          { purpose: case credentialAction of
+          { purpose: case credAction of
               Withdrawal rewardAddress -> ForReward rewardAddress
               StakeCert cert -> ForCert cert
               Minting scriptHash -> ForMint scriptHash
@@ -573,7 +567,8 @@ useWithdrawRewardsWitness stakeCredential amount witness = do
       }
   _transaction <<< _body <<< _withdrawals %=
     Map.insert rewardAddress amount
-  useCredentialWitness (Withdrawal rewardAddress) stakeCredential witness
+  useCredentialWitness (Withdrawal rewardAddress) (unwrap stakeCredential)
+    witness
 
 -- | Tries to modify the transaction to make it consume a given output.
 -- | Uses a `SpendWitness` to try to satisfy spending requirements.
