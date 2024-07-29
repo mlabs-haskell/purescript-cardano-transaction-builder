@@ -36,7 +36,18 @@ module Cardano.Transaction.Edit
 
 import Prelude
 
-import Cardano.Types (Certificate, Redeemer(Redeemer), RedeemerTag(Mint, Spend, Reward, Cert, Propose, Vote), RewardAddress, ScriptHash, Transaction(Transaction), TransactionBody(TransactionBody), TransactionInput, _redeemers, _witnessSet)
+import Cardano.Types
+  ( Certificate
+  , Redeemer(Redeemer)
+  , RedeemerTag(Mint, Spend, Reward, Cert, Propose, Vote)
+  , RewardAddress
+  , ScriptHash
+  , Transaction(Transaction)
+  , TransactionBody(TransactionBody)
+  , TransactionInput
+  , _redeemers
+  , _witnessSet
+  )
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.ExUnits as ExUnits
 import Cardano.Types.RedeemerDatum (RedeemerDatum)
@@ -156,7 +167,8 @@ attachRedeemer ctx { purpose, datum } = do
     ForVote voter -> findIndex (eq voter) ctx.voters <#> \index ->
       { tag: Vote, index }
   pure $
-    Redeemer { tag, index: BigNum.fromInt index, data: datum, exUnits: ExUnits.empty }
+    Redeemer
+      { tag, index: BigNum.fromInt index, data: datum, exUnits: ExUnits.empty }
 
 -- | A transaction with redeemers detached.
 type EditableTransaction =
@@ -181,7 +193,10 @@ toEditableTransaction tx =
     }
   where
   partitionWith
-    :: forall a b. (a -> Maybe b) -> Array a -> { no :: Array a, yes :: Array b }
+    :: forall a b
+     . (a -> Maybe b)
+    -> Array a
+    -> { no :: Array a, yes :: Array b }
   partitionWith f =
     map (\x -> note x (f x)) >>> \arr ->
       { no: arr # map blush # catMaybes
@@ -242,7 +257,8 @@ editTransaction f tx =
   let
     editableTx = toEditableTransaction tx
     processedTransaction = f editableTx.transaction
-    { redeemers: newValidRedeemers } = toEditableTransaction processedTransaction
+    { redeemers: newValidRedeemers } = toEditableTransaction
+      processedTransaction
     editedTx = editableTx
       { transaction = processedTransaction
       , redeemers = nub $ editableTx.redeemers <> newValidRedeemers
