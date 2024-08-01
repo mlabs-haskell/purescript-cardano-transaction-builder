@@ -77,10 +77,20 @@ import Cardano.Types.Address (getNetworkId, getPaymentCredential)
 import Cardano.Types.Certificate
   ( Certificate
       ( StakeRegistration
-      , PoolRegistration
-      , PoolRetirement
       , StakeDeregistration
       , StakeDelegation
+      , PoolRegistration
+      , PoolRetirement
+      , VoteDelegCert
+      , StakeVoteDelegCert
+      , StakeRegDelegCert
+      , VoteRegDelegCert
+      , StakeVoteRegDelegCert
+      , AuthCommitteeHotCert
+      , ResignCommitteeColdCert
+      , RegDrepCert
+      , UnregDrepCert
+      , UpdateDrepCert
       )
   )
 import Cardano.Types.Credential
@@ -509,11 +519,11 @@ useVotingProcedureWitness voter mbWitness = do
 useCertificateWitness :: Certificate -> Maybe CredentialWitness -> BuilderM Unit
 useCertificateWitness cert mbWitness =
   case cert of
-    StakeDeregistration stakeCredential -> do
-      let cred = unwrap stakeCredential
-      case stakeCredential, mbWitness of
+    StakeDeregistration stakeCred -> do
+      let cred = unwrap stakeCred
+      case stakeCred, mbWitness of
         StakeCredential (PubKeyHashCredential _), Just witness ->
-          throwError $ UnneededDeregisterWitness stakeCredential witness
+          throwError $ UnneededDeregisterWitness stakeCred witness
         StakeCredential (PubKeyHashCredential _), Nothing -> pure unit
         StakeCredential (ScriptHashCredential _), Nothing ->
           throwError $ WrongCredentialType (StakeCert cert) PubKeyHashWitness
@@ -521,12 +531,29 @@ useCertificateWitness cert mbWitness =
         StakeCredential (ScriptHashCredential scriptHash), Just witness ->
           assertScriptHashMatchesCredentialWitness scriptHash witness
       useCredentialWitness (StakeCert cert) cred mbWitness
-    StakeDelegation stakeCredential _ ->
-      useCredentialWitness (StakeCert cert) (unwrap stakeCredential) mbWitness
+    StakeDelegation stakeCred _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
     StakeRegistration _ -> pure unit
     PoolRegistration _ -> pure unit
     PoolRetirement _ -> pure unit
-    _ -> pure unit -- TODO
+    VoteDelegCert stakeCred _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
+    StakeVoteDelegCert stakeCred _ _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
+    StakeRegDelegCert stakeCred _ _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
+    VoteRegDelegCert stakeCred _ _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
+    StakeVoteRegDelegCert stakeCred _ _ _ ->
+      useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
+    AuthCommitteeHotCert _ -> pure unit -- not supported
+    ResignCommitteeColdCert _ _ -> pure unit -- not supported
+    RegDrepCert drepCred _ _ ->
+      useCredentialWitness (StakeCert cert) drepCred mbWitness
+    UnregDrepCert drepCred _ ->
+      useCredentialWitness (StakeCert cert) drepCred mbWitness
+    UpdateDrepCert drepCred _ ->
+      useCredentialWitness (StakeCert cert) drepCred mbWitness
 
 useCredentialWitness
   :: CredentialAction
