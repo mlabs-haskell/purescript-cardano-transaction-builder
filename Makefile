@@ -29,6 +29,7 @@ check-format: check-explicit-exports
 	@eslint --quiet ${js-sources} --parser-options 'sourceType: module'
 
 format:
+	@doctoc CHANGELOG.md --github --notitle
 	@purs-tidy format-in-place ${ps-sources}
 	@nixpkgs-fmt ${nix-sources}
 	@make check-format
