@@ -23,6 +23,7 @@ module Cardano.Transaction.Builder
       , UnneededDatumWitness
       , UnneededDeregisterWitness
       , UnneededSpoVoteWitness
+      , UnneededProposalPolicyWitness
       , UnableToAddMints
       , RedeemerIndexingError
       , RedeemerIndexingInternalError
@@ -35,6 +36,7 @@ module Cardano.Transaction.Builder
       , Withdrawal
       , Minting
       , Voting
+      , Proposing
       )
   , buildTransaction
   , modifyTransaction
@@ -46,7 +48,7 @@ import Prelude
 import Cardano.AsCbor (encodeCbor)
 import Cardano.Transaction.Edit
   ( DetachedRedeemer
-  , RedeemerPurpose(ForCert, ForReward, ForSpend, ForMint, ForVote)
+  , RedeemerPurpose(ForCert, ForReward, ForSpend, ForMint, ForVote, ForPropose)
   , fromEditableTransactionSafe
   , toEditableTransactionSafe
   )
@@ -55,6 +57,7 @@ import Cardano.Types
   , AssetName
   , Coin
   , DataHash
+  , GovernanceAction(ChangePParams, TreasuryWdrl)
   , Mint
   , NativeScript
   , NetworkId
@@ -153,7 +156,7 @@ data TransactionBuilderStep
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
   | IssueCertificate Certificate (Maybe CredentialWitness)
   | WithdrawRewards StakeCredential Coin (Maybe CredentialWitness)
-  | SubmitProposal VotingProposal
+  | SubmitProposal VotingProposal (Maybe CredentialWitness)
   | SubmitVotingProcedure Voter (Map GovernanceActionId VotingProcedure)
       (Maybe CredentialWitness)
 
@@ -275,6 +278,7 @@ data CredentialAction
   | Withdrawal RewardAddress
   | Minting ScriptHash
   | Voting Voter
+  | Proposing VotingProposal
 
 derive instance Generic CredentialAction _
 derive instance Eq CredentialAction
@@ -286,6 +290,7 @@ explainCredentialAction (StakeCert _) = "This stake certificate"
 explainCredentialAction (Withdrawal _) = "This stake rewards withdrawal"
 explainCredentialAction (Minting _) = "This mint"
 explainCredentialAction (Voting _) = "This voting procedure"
+explainCredentialAction (Proposing _) = "This voting proposal"
 
 data TxBuildError
   = WrongSpendWitnessType TransactionUnspentOutput
@@ -297,6 +302,7 @@ data TxBuildError
   | UnneededDatumWitness TransactionUnspentOutput DatumWitness
   | UnneededDeregisterWitness StakeCredential CredentialWitness
   | UnneededSpoVoteWitness Credential CredentialWitness
+  | UnneededProposalPolicyWitness VotingProposal CredentialWitness
   | UnableToAddMints Mint Mint
   | RedeemerIndexingError Redeemer
   | RedeemerIndexingInternalError Transaction (Array TransactionBuilderStep)
@@ -360,6 +366,11 @@ explainTxBuildError (UnneededDeregisterWitness stakeCredential witness) =
 explainTxBuildError (UnneededSpoVoteWitness cred witness) =
   "You've provided an optional `CredentialWitness`, but the corresponding Voter is SPO (Stake Pool Operator). You should omit the provided credential witness for this credential: "
     <> show cred
+    <> ". Provided witness: "
+    <> show witness
+explainTxBuildError (UnneededProposalPolicyWitness proposal witness) =
+  "You've provided an optional `CredentialWitness`, but the corresponding proposal does not need to validate against the proposal policy. You should omit the provided credential witness for this proposal: "
+    <> show proposal
     <> ". Provided witness: "
     <> show witness
 explainTxBuildError (UnableToAddMints a b) =
@@ -429,9 +440,10 @@ processConstraint = case _ of
     useCertificateWitness cert witness
   WithdrawRewards stakeCredential amount witness ->
     useWithdrawRewardsWitness stakeCredential amount witness
-  SubmitProposal proposal ->
+  SubmitProposal proposal witness -> do
     _transaction <<< _body <<< _votingProposals
       %= pushUnique proposal
+    useProposalWitness proposal witness
   SubmitVotingProcedure voter votes witness -> do
     _transaction <<< _body <<< _votingProcedures <<< _Newtype
       %= Map.insert voter votes
@@ -516,6 +528,24 @@ useVotingProcedureWitness voter mbWitness = do
     Drep cred -> pure cred
   useCredentialWitness (Voting voter) cred mbWitness
 
+useProposalWitness :: VotingProposal -> Maybe CredentialWitness -> BuilderM Unit
+useProposalWitness proposal mbWitness =
+  case getPolicyHash (unwrap proposal).govAction, mbWitness of
+    Nothing, Just witness ->
+      throwError $ UnneededProposalPolicyWitness proposal witness
+    Just policyHash, witness ->
+      useCredentialWitness (Proposing proposal)
+        (ScriptHashCredential policyHash)
+        witness
+    Nothing, Nothing ->
+      pure unit
+  where
+  getPolicyHash :: GovernanceAction -> Maybe ScriptHash
+  getPolicyHash = case _ of
+    ChangePParams action -> (unwrap action).policyHash
+    TreasuryWdrl action -> (unwrap action).policyHash
+    _ -> Nothing
+
 useCertificateWitness :: Certificate -> Maybe CredentialWitness -> BuilderM Unit
 useCertificateWitness cert mbWitness =
   case cert of
@@ -577,6 +607,7 @@ useCredentialWitness credAction cred witness =
               StakeCert cert -> ForCert cert
               Minting scriptHash -> ForMint scriptHash
               Voting voter -> ForVote voter
+              Proposing proposal -> ForPropose proposal
           -- ForSpend is not possible: for that we use OutputWitness
           , datum: redeemerDatum
           }
