@@ -172,22 +172,28 @@ let additions =
       , cardano-serialization-lib =
         { dependencies =
           [ "aeson"
+          , "aff"
           , "argonaut"
           , "bifunctors"
           , "bytearrays"
           , "effect"
           , "either"
+          , "enums"
           , "maybe"
           , "nullable"
           , "ordered-collections"
+          , "partial"
           , "prelude"
           , "profunctor"
+          , "spec"
+          , "transformers"
           , "tuples"
+          , "unsafe-coerce"
           ]
         , repo =
             "https://github.com/mlabs-haskell/purescript-cardano-serialization-lib"
-        , version = "c66afbb9c572db096690ec1dd786c9ec96105c0d"
-        }
+        , version = "e0aba835966329b6c3949b9d837bcec1e3770a30"
+        }     
       , cardano-plutus-data-schema =
         { dependencies = [ "prelude" ]
         , repo =
@@ -221,14 +227,15 @@ let additions =
       , cardano-types =
         { dependencies =
           [ "aeson"
+          , "aff"
           , "arraybuffer-types"
           , "arrays"
           , "bifunctors"
           , "bytearrays"
           , "cardano-plutus-data-schema"
           , "cardano-serialization-lib"
-          , "console"
           , "control"
+          , "datetime"
           , "effect"
           , "either"
           , "encoding"
@@ -242,6 +249,8 @@ let additions =
           , "literals"
           , "maybe"
           , "monad-logger"
+          , "mote"
+          , "mote-testplan"
           , "newtype"
           , "nonempty"
           , "nullable"
@@ -249,20 +258,21 @@ let additions =
           , "partial"
           , "prelude"
           , "profunctor"
+          , "profunctor-lenses"
           , "quickcheck"
           , "rationals"
           , "record"
           , "safe-coerce"
-          , "strings"
+          , "spec"
           , "these"
           , "tuples"
           , "typelevel-prelude"
           , "uint"
           , "unfoldable"
           , "unsafe-coerce"
-          ]
+          ]        
         , repo = "https://github.com/mlabs-haskell/purescript-cardano-types"
-        , version = "40d9468a4712ad2bf57ebede19fae92208f082a0"
+        , version = "e7ec87d9ab3bee57f88356b2d799d49d6b7e5709"
         }
       }
 

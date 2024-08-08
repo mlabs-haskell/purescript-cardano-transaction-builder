@@ -1,5 +1,5 @@
 {
-  description = "purescript-cardano-types";
+  description = "purescript-cardano-transaction-builder";
 
   # Allow IFD in `nix flake check`.
   nixConfig.allow-import-from-derivation = "true";
@@ -7,7 +7,7 @@
   nixConfig = {
     extra-substituters = [ "https://plutonomicon.cachix.org" ];
     extra-trusted-public-keys = [ "plutonomicon.cachix.org-1:evUxtNULjCjOipxwAnYhNFeF/lyYU1FeNGaVAnm+QQw=" ];
-    bash-prompt = "\\[\\e[0m\\][\\[\\e[0;2m\\]nix-develop \\[\\e[0;1m\\]ps-cardano-types@\\[\\033[33m\\]$(git rev-parse --abbrev-ref HEAD) \\[\\e[0;32m\\]\\w\\[\\e[0m\\]]\\[\\e[0m\\]$ \\[\\e[0m\\]";
+    bash-prompt = "\\[\\e[0m\\][\\[\\e[0;2m\\]nix-develop \\[\\e[0;1m\\]ps-cardano-tx-builder@\\[\\033[33m\\]$(git rev-parse --abbrev-ref HEAD) \\[\\e[0;32m\\]\\w\\[\\e[0m\\]]\\[\\e[0m\\]$ \\[\\e[0m\\]";
   };
 
   inputs = {

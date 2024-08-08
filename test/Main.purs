@@ -21,31 +21,32 @@ import Cardano.Transaction.Builder
   )
 import Cardano.Transaction.Edit (editTransaction, editTransactionSafe)
 import Cardano.Types
-  ( Address(BaseAddress)
-  , NetworkId(MainnetId, TestnetId)
-  , RedeemerTag(Cert, Spend)
+  ( Address(BaseAddress, EnterpriseAddress)
   , Certificate(StakeDeregistration)
   , Coin(Coin)
   , Credential(PubKeyHashCredential, ScriptHashCredential)
+  , NativeScript(ScriptAll)
+  , NetworkId(MainnetId, TestnetId)
+  , PlutusData(List, Map)
+  , PlutusScript
   , Redeemer(Redeemer)
+  , RedeemerTag(Cert, Spend)
+  , ScriptHash
   , Transaction
   , TransactionInput(TransactionInput)
   , TransactionOutput(TransactionOutput)
   , TransactionUnspentOutput(TransactionUnspentOutput)
-  , PlutusScript
-  , PlutusData(List, Map)
-  , NativeScript(ScriptAll)
   , Value(Value)
   , _address
+  , _body
   , _certs
+  , _inputs
   , _networkId
   , _output
   , _outputs
   , _plutusScripts
   , _redeemers
   , _witnessSet
-  , _inputs
-  , _body
   )
 import Cardano.Types.BigNum as BigNum
 import Cardano.Types.ExUnits as ExUnits
@@ -232,24 +233,37 @@ builderTests = group "Cardano.Transaction.Builder" do
         { input: input1
         , output: pkhOutput
         }
-    nsWitness = NativeScriptOutput (ScriptValue $ ScriptAll [])
+    skhUtxo =
+      TransactionUnspentOutput
+        { input: input1
+        , output: skhOutput
+        }
+    ns = ScriptAll []
+    nsWitness = NativeScriptOutput $ ScriptValue ns
+    plutusScriptWitness =
+      PlutusScriptOutput (ScriptValue script2) RedeemerDatum.unit
+        Nothing
     plutusScriptRefWitness =
-      PlutusScriptOutput (ScriptReference input1 SpendInput) RedeemerDatum.unit Nothing
+      PlutusScriptOutput (ScriptReference input1 SpendInput) RedeemerDatum.unit
+        Nothing
   group "SpendOutput" do
     testBuilderSteps "PKH output" [ SpendOutput pkhUtxo Nothing ] $
       anyNetworkTx # _body <<< _inputs .~ [ input1 ]
     testBuilderSteps "PKH output x2 -> 1"
       [ SpendOutput pkhUtxo Nothing, SpendOutput pkhUtxo Nothing ] $
       anyNetworkTx # _body <<< _inputs .~ [ input1 ]
-    testBuilderStepsFail "PKH output with wrong witness"
+    testBuilderStepsFail "PKH output with wrong witness #1"
       [ SpendOutput pkhUtxo (Just nsWitness) ] $
-      WrongOutputType ScriptHashWitness pkhUtxo
-    testBuilderStepsFail "PKH output with wrong witness"
-      [ SpendOutput pkhUtxo (Just nsWitness) ] $
-      WrongOutputType ScriptHashWitness pkhUtxo
+      WrongOutputType (ScriptHashWitness nsWitness) pkhUtxo
     testBuilderStepsFail "PKH output with wrong witness #2"
       [ SpendOutput pkhUtxo (Just plutusScriptRefWitness) ] $
-      WrongOutputType ScriptHashWitness pkhUtxo
+      WrongOutputType (ScriptHashWitness plutusScriptRefWitness) pkhUtxo
+    testBuilderStepsFail "SKH output with wrong witness #1"
+      [ SpendOutput skhUtxo (Just nsWitness) ] $
+      IncorrectScriptHash (Left ns) scriptHash1
+    testBuilderStepsFail "SKH output with wrong witness #2"
+      [ SpendOutput skhUtxo (Just plutusScriptWitness) ] $
+      IncorrectScriptHash (Right script2) scriptHash1
     test "PKH output with wrong NetworkId" do
       let
         result =
@@ -266,7 +280,9 @@ builderTests = group "Cardano.Transaction.Builder" do
   group "Deregister" do
     testBuilderSteps "Deregister script"
       [ IssueCertificate
-          (StakeDeregistration (wrap $ ScriptHashCredential $ PlutusScript.hash script1))
+          ( StakeDeregistration
+              (wrap $ ScriptHashCredential $ PlutusScript.hash script1)
+          )
           $ Just
           $ PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
       ] $
@@ -288,11 +304,18 @@ builderTests = group "Cardano.Transaction.Builder" do
       let
         witness =
           PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
-      testBuilderStepsFail "deregistering stake credential with unneeded witness fails"
-        [ IssueCertificate (StakeDeregistration $ wrap $ pubKeyHashCredential1) $ Just witness ] $
+      testBuilderStepsFail
+        "deregistering stake credential with unneeded witness fails"
+        [ IssueCertificate (StakeDeregistration $ wrap $ pubKeyHashCredential1)
+            $ Just witness
+        ] $
         UnneededDeregisterWitness (wrap $ pubKeyHashCredential1) witness
-    testBuilderStepsFail "deregistering stake credential with wrong witness fails"
-      [ IssueCertificate (StakeDeregistration $ wrap $ ScriptHashCredential $ PlutusScript.hash script2)
+    testBuilderStepsFail
+      "deregistering stake credential with wrong witness fails"
+      [ IssueCertificate
+          ( StakeDeregistration $ wrap $ ScriptHashCredential $
+              PlutusScript.hash script2
+          )
           $ Just
           $ PlutusScriptCredential (ScriptValue script1) RedeemerDatum.unit
       ] $
@@ -317,6 +340,18 @@ testBuilderSteps label steps expected = test label do
   let
     result = buildTransaction steps
   result `shouldEqual` Right expected
+
+skhOutput :: TransactionOutput
+skhOutput =
+  TransactionOutput
+    { address: EnterpriseAddress
+        { networkId: MainnetId
+        , paymentCredential: wrap scriptHashCredential1
+        }
+    , amount: Value (Coin (BigNum.fromInt 5000000)) MultiAsset.empty
+    , datum: Nothing
+    , scriptRef: Nothing
+    }
 
 pkhOutput :: TransactionOutput
 pkhOutput =
@@ -366,6 +401,9 @@ pkhOutput =
       }
   )
 
+scriptHashCredential1 :: Credential
+scriptHashCredential1 = ScriptHashCredential scriptHash1
+
 pubKeyHashCredential1 :: Credential
 pubKeyHashCredential1 =
   PubKeyHashCredential $ unsafePartial
@@ -413,19 +451,30 @@ mkTransactionInput txId ix =
     }
 
 input0 :: TransactionInput
-input0 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 0
+input0 = mkTransactionInput
+  "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996"
+  0
 
 input1 :: TransactionInput
-input1 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 1
+input1 = mkTransactionInput
+  "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996"
+  1
 
 input2 :: TransactionInput
-input2 = mkTransactionInput "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996" 2
+input2 = mkTransactionInput
+  "5d677265fa5bb21ce6d8c7502aca70b9316d10e958611f3c6b758f65ad959996"
+  2
 
 script1 :: PlutusScript
-script1 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4e4d01000033222220051200120011"
+script1 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe
+  "4e4d01000033222220051200120011"
+
+scriptHash1 :: ScriptHash
+scriptHash1 = PlutusScript.hash script1
 
 script2 :: PlutusScript
-script2 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe "4e4d01000033222220051200120012"
+script2 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe
+  "4e4d01000033222220051200120012"
 
 anyNetworkTx :: Transaction
 anyNetworkTx = Transaction.empty

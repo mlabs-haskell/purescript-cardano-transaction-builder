@@ -1,12 +1,15 @@
 {
-    "name": "purescript-cardano-types",
+    "name": "purescript-cardano-transaction-builder",
     "type": "module",
     "scripts": {
         "test": "spago test"
     },
     "dependencies": {
-        "@mlabs-haskell/cardano-serialization-lib-gc": "^1.0.10",
+        "@mlabs-haskell/cardano-serialization-lib-gc": "12.0.0-beta.2",
         "@mlabs-haskell/json-bigint": "^2.0.0"
+    },
+    "devDependencies": {
+        "doctoc": "^2.2.1"
     },
     "prettier": {
         "arrowParens": "avoid",
