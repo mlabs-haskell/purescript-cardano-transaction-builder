@@ -147,7 +147,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(Just, Nothing), isJust, maybe)
 import Data.Newtype (unwrap)
 import Data.Show.Generic (genericShow)
-import Data.Traversable (for_, traverse_)
+import Data.Traversable (traverse_)
 import Data.Tuple (snd)
 import Record (merge)
 import Type.Proxy (Proxy(Proxy))
