@@ -128,10 +128,12 @@ import Cardano.Types.TransactionWitnessSet
 import Cardano.Types.Voter (Voter(Cc, Drep, Spo))
 import Cardano.Types.VotingProcedure (VotingProcedure)
 import Cardano.Types.VotingProposal (VotingProposal)
-import Control.Monad.Error.Class (throwError)
+import Control.Monad.Error.Class (liftMaybe, throwError)
 import Control.Monad.Except (Except, runExcept)
+import Control.Monad.Maybe.Trans (MaybeT(MaybeT), runMaybeT)
 import Control.Monad.State (StateT, modify_, runStateT)
 import Control.Monad.State.Trans (gets)
+import Control.Monad.Trans.Class (lift)
 import Data.Array (nub)
 import Data.Bifunctor (lmap)
 import Data.ByteArray (byteArrayToHex)
@@ -262,15 +264,17 @@ _redeemers
   :: Lens' Context (Array DetachedRedeemer)
 _redeemers = prop (Proxy :: Proxy "redeemers")
 
-data ExpectedWitnessType = ScriptHashWitness | PubKeyHashWitness
+data ExpectedWitnessType witness
+  = ScriptHashWitness witness
+  | PubKeyHashWitness
 
-derive instance Generic ExpectedWitnessType _
-derive instance Eq ExpectedWitnessType
-instance Show ExpectedWitnessType where
+derive instance Generic (ExpectedWitnessType witness) _
+derive instance Eq witness => Eq (ExpectedWitnessType witness)
+instance Show witness => Show (ExpectedWitnessType witness) where
   show = genericShow
 
-explainExpectedWitnessType :: ExpectedWitnessType -> String
-explainExpectedWitnessType ScriptHashWitness = "ScriptHash"
+explainExpectedWitnessType :: forall a. ExpectedWitnessType a -> String
+explainExpectedWitnessType (ScriptHashWitness _) = "ScriptHash"
 explainExpectedWitnessType PubKeyHashWitness = "PubKeyHash"
 
 data CredentialAction
@@ -296,8 +300,9 @@ data TxBuildError
   = WrongSpendWitnessType TransactionUnspentOutput
   | IncorrectDatumHash TransactionUnspentOutput PlutusData DataHash
   | IncorrectScriptHash (Either NativeScript PlutusScript) ScriptHash
-  | WrongOutputType ExpectedWitnessType TransactionUnspentOutput
-  | WrongCredentialType CredentialAction ExpectedWitnessType Credential
+  | WrongOutputType (ExpectedWitnessType OutputWitness) TransactionUnspentOutput
+  | WrongCredentialType CredentialAction (ExpectedWitnessType CredentialWitness)
+      Credential
   | DatumWitnessNotProvided TransactionUnspentOutput
   | UnneededDatumWitness TransactionUnspentOutput DatumWitness
   | UnneededDeregisterWitness StakeCredential CredentialWitness
@@ -337,7 +342,7 @@ explainTxBuildError (IncorrectScriptHash (Right plutusScript) hash) =
     <> ") does not match the provided Plutus script ("
     <> show plutusScript
     <> ")"
-explainTxBuildError (WrongOutputType ScriptHashWitness utxo) =
+explainTxBuildError (WrongOutputType (ScriptHashWitness _) utxo) =
   "The UTxO you provided requires no witness, because the payment credential of the address is a `PubKeyHash`. UTxO: "
     <> show
       utxo
@@ -461,29 +466,37 @@ assertNetworkId addr = do
         throwError (WrongNetworkId addr)
 
 assertOutputType
-  :: ExpectedWitnessType -> TransactionUnspentOutput -> BuilderM Unit
-assertOutputType outputType utxo = do
-  let
-    mbCredential =
-      (getPaymentCredential (utxo ^. _output <<< _address) <#> unwrap)
-        >>= case outputType of
-          ScriptHashWitness -> Credential.asScriptHash >>> void
-          PubKeyHashWitness -> Credential.asPubKeyHash >>> void
+  :: ExpectedWitnessType OutputWitness
+  -> TransactionUnspentOutput
+  -> BuilderM Unit
+assertOutputType expectedType utxo = do
+  mbCredential <- runMaybeT do
+    cred <- MaybeT $ pure $ getPaymentCredential (utxo ^. _output <<< _address)
+      <#> unwrap
+    case expectedType of
+      ScriptHashWitness witness -> do
+        scriptHash <- MaybeT $ pure $ Credential.asScriptHash cred
+        lift $ assertScriptHashMatchesOutputWitness scriptHash witness
+        pure unit
+      PubKeyHashWitness ->
+        MaybeT $ pure $ Credential.asPubKeyHash cred $> unit
   unless (isJust mbCredential) do
-    throwError $ WrongOutputType outputType utxo
+    throwError $ WrongOutputType expectedType utxo
 
 assertCredentialType
-  :: CredentialAction -> ExpectedWitnessType -> Credential -> BuilderM Unit
+  :: CredentialAction
+  -> ExpectedWitnessType CredentialWitness
+  -> Credential
+  -> BuilderM Unit
 assertCredentialType action expectedType cred = do
-  let
-    mbCred =
-      case expectedType of
-        ScriptHashWitness ->
-          void $ Credential.asScriptHash cred
-        PubKeyHashWitness ->
-          void $ Credential.asPubKeyHash cred
-  unless (isJust mbCred) do
-    throwError $ WrongCredentialType action expectedType cred
+  let wrongCredErr = WrongCredentialType action expectedType cred
+  case expectedType of
+    ScriptHashWitness witness -> do
+      scriptHash <- liftMaybe wrongCredErr $ Credential.asScriptHash cred
+      assertScriptHashMatchesCredentialWitness scriptHash witness
+    PubKeyHashWitness ->
+      maybe (throwError wrongCredErr) (const (pure unit)) $
+        Credential.asPubKeyHash cred
 
 useMintAssetWitness
   :: ScriptHash -> AssetName -> Int.Int -> CredentialWitness -> BuilderM Unit
@@ -502,19 +515,39 @@ useMintAssetWitness scriptHash assetName amount witness = do
   modify_ $ _transaction <<< _body <<< _mint .~ Just newMint
 
 assertScriptHashMatchesCredentialWitness
-  :: ScriptHash -> CredentialWitness -> BuilderM Unit
-assertScriptHashMatchesCredentialWitness scriptHash witness = do
-  let
-    mbScript = case witness of
+  :: ScriptHash
+  -> CredentialWitness
+  -> BuilderM Unit
+assertScriptHashMatchesCredentialWitness scriptHash witness =
+  traverse_ (assertScriptHashMatchesScript scriptHash) $
+    case witness of
       PlutusScriptCredential (ScriptValue plutusScript) _ -> Just
         (Right plutusScript)
       NativeScriptCredential (ScriptValue nativeScript) -> Just
         (Left nativeScript)
       _ -> Nothing
-  for_ mbScript \eiScript -> do
-    let hash = either NativeScript.hash PlutusScript.hash eiScript
-    unless (scriptHash == hash) do
-      throwError $ IncorrectScriptHash eiScript scriptHash
+
+assertScriptHashMatchesOutputWitness
+  :: ScriptHash
+  -> OutputWitness
+  -> BuilderM Unit
+assertScriptHashMatchesOutputWitness scriptHash witness =
+  traverse_ (assertScriptHashMatchesScript scriptHash) $
+    case witness of
+      PlutusScriptOutput (ScriptValue plutusScript) _ _ -> Just
+        (Right plutusScript)
+      NativeScriptOutput (ScriptValue nativeScript) -> Just
+        (Left nativeScript)
+      _ -> Nothing
+
+assertScriptHashMatchesScript
+  :: ScriptHash
+  -> Either NativeScript PlutusScript
+  -> BuilderM Unit
+assertScriptHashMatchesScript scriptHash eiScript = do
+  let hash = either NativeScript.hash PlutusScript.hash eiScript
+  unless (scriptHash == hash) do
+    throwError $ IncorrectScriptHash eiScript scriptHash
 
 useVotingProcedureWitness :: Voter -> Maybe CredentialWitness -> BuilderM Unit
 useVotingProcedureWitness voter mbWitness = do
@@ -590,28 +623,29 @@ useCredentialWitness
   -> Credential
   -> Maybe CredentialWitness
   -> BuilderM Unit
-useCredentialWitness credAction cred witness =
-  case witness of
+useCredentialWitness credAction cred mbWitness =
+  case mbWitness of
     Nothing ->
       assertCredentialType credAction PubKeyHashWitness cred
-    Just (NativeScriptCredential nsWitness) -> do
-      assertCredentialType credAction ScriptHashWitness cred
+    Just witness@(NativeScriptCredential nsWitness) -> do
+      assertCredentialType credAction (ScriptHashWitness witness) cred
       useNativeScriptWitness nsWitness
-    Just (PlutusScriptCredential plutusScriptWitness redeemerDatum) -> do
-      assertCredentialType credAction ScriptHashWitness cred
-      usePlutusScriptWitness plutusScriptWitness
-      let
-        redeemer =
-          { purpose: case credAction of
-              Withdrawal rewardAddress -> ForReward rewardAddress
-              StakeCert cert -> ForCert cert
-              Minting scriptHash -> ForMint scriptHash
-              Voting voter -> ForVote voter
-              Proposing proposal -> ForPropose proposal
-          -- ForSpend is not possible: for that we use OutputWitness
-          , datum: redeemerDatum
-          }
-      _redeemers %= pushUnique redeemer
+    Just witness@(PlutusScriptCredential plutusScriptWitness redeemerDatum) ->
+      do
+        assertCredentialType credAction (ScriptHashWitness witness) cred
+        usePlutusScriptWitness plutusScriptWitness
+        let
+          redeemer =
+            { purpose: case credAction of
+                Withdrawal rewardAddress -> ForReward rewardAddress
+                StakeCert cert -> ForCert cert
+                Minting scriptHash -> ForMint scriptHash
+                Voting voter -> ForVote voter
+                Proposing proposal -> ForPropose proposal
+            -- ForSpend is not possible: for that we use OutputWitness
+            , datum: redeemerDatum
+            }
+        _redeemers %= pushUnique redeemer
 
 useWithdrawRewardsWitness
   :: StakeCredential -> Coin -> Maybe CredentialWitness -> BuilderM Unit
@@ -635,13 +669,15 @@ useSpendWitness
 useSpendWitness utxo = case _ of
   Nothing -> do
     assertOutputType PubKeyHashWitness utxo
-  Just (NativeScriptOutput nsWitness) -> do
-    assertOutputType ScriptHashWitness utxo
+  Just witness@(NativeScriptOutput nsWitness) -> do
+    assertOutputType (ScriptHashWitness witness) utxo
     -- attach the script
     useNativeScriptWitness nsWitness
-  Just (PlutusScriptOutput plutusScriptWitness redeemerDatum mbDatumWitness) ->
+  Just
+    witness@
+      (PlutusScriptOutput plutusScriptWitness redeemerDatum mbDatumWitness) ->
     do
-      assertOutputType ScriptHashWitness utxo
+      assertOutputType (ScriptHashWitness witness) utxo
       -- attach the script
       usePlutusScriptWitness plutusScriptWitness
       -- attach the datum
