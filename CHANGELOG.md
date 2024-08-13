@@ -6,12 +6,12 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [[Unreleased]](#unreleased)
+- [v2.0.0](#v200)
   - [Added](#added)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## [Unreleased]
+## v2.0.0
 
 ### Added
 

@@ -19,6 +19,9 @@ data TransactionBuilderStep
   | MintAsset ScriptHash AssetName Int.Int CredentialWitness
   | IssueCertificate Certificate (Maybe CredentialWitness)
   | WithdrawRewards StakeCredential Coin (Maybe CredentialWitness)
+  | SubmitProposal VotingProposal (Maybe CredentialWitness)
+  | SubmitVotingProcedure Voter (Map GovernanceActionId VotingProcedure)
+      (Maybe CredentialWitness)
 
 data OutputWitness
   = NativeScriptOutput (ScriptWitness NativeScript)
