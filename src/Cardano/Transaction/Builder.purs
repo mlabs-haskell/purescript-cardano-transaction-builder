@@ -24,7 +24,6 @@ module Cardano.Transaction.Builder
       , UnneededDeregisterWitness
       , UnneededSpoVoteWitness
       , UnneededProposalPolicyWitness
-      , UnableToAddMints
       , RedeemerIndexingError
       , RedeemerIndexingInternalError
       , WrongNetworkId
@@ -58,7 +57,6 @@ import Cardano.Types
   , Coin
   , DataHash
   , GovernanceAction(ChangePParams, TreasuryWdrl)
-  , Mint
   , NativeScript
   , NetworkId
   , PlutusData
@@ -308,7 +306,6 @@ data TxBuildError
   | UnneededDeregisterWitness StakeCredential CredentialWitness
   | UnneededSpoVoteWitness Credential CredentialWitness
   | UnneededProposalPolicyWitness VotingProposal CredentialWitness
-  | UnableToAddMints Mint Mint
   | RedeemerIndexingError Redeemer
   | RedeemerIndexingInternalError Transaction (Array TransactionBuilderStep)
   | WrongNetworkId Address
@@ -378,8 +375,6 @@ explainTxBuildError (UnneededProposalPolicyWitness proposal witness) =
     <> show proposal
     <> ". Provided witness: "
     <> show witness
-explainTxBuildError (UnableToAddMints a b) =
-  "Numeric overflow: unable to add `Mint`s: " <> show a <> " and " <> show b
 explainTxBuildError (RedeemerIndexingError redeemer) =
   "Redeemer indexing error. Problematic redeemer that does not have a valid index: "
     <> show redeemer
@@ -510,8 +505,7 @@ useMintAssetWitness scriptHash assetName amount witness = do
     thisMint = Mint.singleton scriptHash assetName amount
   newMint <- case mbMint of
     Nothing -> pure thisMint
-    Just mint -> Mint.union mint thisMint #
-      maybe (throwError $ UnableToAddMints mint thisMint) pure
+    Just mint -> pure $ Mint.union mint thisMint
   modify_ $ _transaction <<< _body <<< _mint .~ Just newMint
 
 assertScriptHashMatchesCredentialWitness
