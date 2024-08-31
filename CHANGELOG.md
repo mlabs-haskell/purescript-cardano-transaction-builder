@@ -6,10 +6,23 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+- [v2.0.1](#v201)
+  - [Changed](#changed)
+  - [Removed](#removed)
 - [v2.0.0](#v200)
   - [Added](#added)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## v2.0.1
+
+### Changed
+
+- Updated to CSL v12.0.0
+
+### Removed
+
+- `UnableToAddMints` error, because `Mint` type is now a semigroup in `cardano-types`.
 
 ## v2.0.0
 
