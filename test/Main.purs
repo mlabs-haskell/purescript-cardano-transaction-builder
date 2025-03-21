@@ -25,6 +25,7 @@ import Cardano.Types
   , Certificate(StakeDeregistration)
   , Coin(Coin)
   , Credential(PubKeyHashCredential, ScriptHashCredential)
+  , Language(PlutusV1)
   , NativeScript(ScriptAll)
   , NetworkId(MainnetId, TestnetId)
   , PlutusData(List, Map)
@@ -466,15 +467,19 @@ input2 = mkTransactionInput
   2
 
 script1 :: PlutusScript
-script1 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe
-  "4e4d01000033222220051200120011"
+script1 =
+  unsafePartial $ fromJust $ flip PlutusScript.decodeCbor PlutusV1 $ wrap $
+    hexToByteArrayUnsafe
+      "4d01000033222220051200120011"
 
 scriptHash1 :: ScriptHash
 scriptHash1 = PlutusScript.hash script1
 
 script2 :: PlutusScript
-script2 = unsafePartial $ fromJust $ decodeCbor $ wrap $ hexToByteArrayUnsafe
-  "4e4d01000033222220051200120012"
+script2 =
+  unsafePartial $ fromJust $ flip PlutusScript.decodeCbor PlutusV1 $ wrap $
+    hexToByteArrayUnsafe
+      "4e4d01000033222220051200120012"
 
 anyNetworkTx :: Transaction
 anyNetworkTx = Transaction.empty
