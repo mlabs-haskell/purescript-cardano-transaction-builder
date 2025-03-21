@@ -504,9 +504,9 @@ useMintAssetWitness scriptHash assetName amount witness = do
   let
     thisMint = Mint.singleton scriptHash assetName amount
   newMint <- case mbMint of
-    Nothing -> pure thisMint
+    Nothing -> pure $ Just thisMint
     Just mint -> pure $ Mint.union mint thisMint
-  modify_ $ _transaction <<< _body <<< _mint .~ Just newMint
+  modify_ $ _transaction <<< _body <<< _mint .~ newMint
 
 assertScriptHashMatchesCredentialWitness
   :: ScriptHash
