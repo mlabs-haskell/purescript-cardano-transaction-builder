@@ -603,8 +603,10 @@ useCertificateWitness cert mbWitness =
       useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
     StakeVoteRegDelegCert stakeCred _ _ _ ->
       useCredentialWitness (StakeCert cert) (unwrap stakeCred) mbWitness
-    AuthCommitteeHotCert _ -> pure unit -- not supported
-    ResignCommitteeColdCert _ _ -> pure unit -- not supported
+    AuthCommitteeHotCert { coldCred } ->
+      useCredentialWitness (StakeCert cert) coldCred mbWitness
+    ResignCommitteeColdCert coldCred _ ->
+      useCredentialWitness (StakeCert cert) coldCred mbWitness
     RegDrepCert drepCred _ _ ->
       useCredentialWitness (StakeCert cert) drepCred mbWitness
     UnregDrepCert drepCred _ ->
