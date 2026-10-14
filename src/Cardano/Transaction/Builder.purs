@@ -14,8 +14,7 @@ module Cardano.Transaction.Builder
   , DatumWitness(DatumValue, DatumReference)
   , RefInputAction(ReferenceInput, SpendInput)
   , TxBuildError
-      ( WrongSpendWitnessType
-      , IncorrectDatumHash
+      ( IncorrectDatumHash
       , IncorrectScriptHash
       , WrongOutputType
       , WrongCredentialType
@@ -295,8 +294,7 @@ explainCredentialAction (Voting _) = "This voting procedure"
 explainCredentialAction (Proposing _) = "This voting proposal"
 
 data TxBuildError
-  = WrongSpendWitnessType TransactionUnspentOutput
-  | IncorrectDatumHash TransactionUnspentOutput PlutusData DataHash
+  = IncorrectDatumHash TransactionUnspentOutput PlutusData DataHash
   | IncorrectScriptHash (Either NativeScript PlutusScript) ScriptHash
   | WrongOutputType (ExpectedWitnessType OutputWitness) TransactionUnspentOutput
   | WrongCredentialType CredentialAction (ExpectedWitnessType CredentialWitness)
@@ -317,9 +315,6 @@ instance Show TxBuildError where
   show = genericShow
 
 explainTxBuildError :: TxBuildError -> String
-explainTxBuildError (WrongSpendWitnessType utxo) =
-  "`OutputWitness` is incompatible with the given output. The output does not contain a datum: "
-    <> show utxo
 explainTxBuildError (IncorrectDatumHash utxo datum datumHash) =
   "You provided a `DatumWitness` with a datum that does not match the datum hash present in a transaction output.\n  Datum: "
     <> show datum
@@ -712,8 +707,10 @@ useDatumWitnessForUtxo
   :: TransactionUnspentOutput -> Maybe DatumWitness -> BuilderM Unit
 useDatumWitnessForUtxo utxo mbDatumWitness = do
   case utxo ^. _output <<< _datum of
-    -- script outputs must have a datum
-    Nothing -> throwError $ WrongSpendWitnessType utxo
+    -- A missing datum is fine at the builder level: V3 script outputs may be
+    -- datum-less (CIP-69). If a V1/V2 script tries to spend such a UTxO, the
+    -- ledger will reject it at phase-1 with MissingRequiredDatums.
+    Nothing -> pure unit
     -- if the datum is inline, we don't need to attach it as witness
     Just (OutputDatum _providedDatum) -> do
       case mbDatumWitness of

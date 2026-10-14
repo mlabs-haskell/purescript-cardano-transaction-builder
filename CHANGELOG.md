@@ -6,15 +6,35 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [v3.0.0](#v300)
+- [[Unreleased]](#unreleased)
   - [Changed](#changed)
-- [v2.0.1](#v201)
-  - [Changed](#changed-1)
   - [Removed](#removed)
+- [v3.0.0](#v300)
+  - [Changed](#changed-1)
+- [v2.0.1](#v201)
+  - [Changed](#changed-2)
+  - [Removed](#removed-1)
 - [v2.0.0](#v200)
   - [Added](#added)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## [Unreleased]
+
+### Changed
+
+- Spending a datum-less UTxO is now permitted at the builder level:
+  `useDatumWitnessForUtxo` no longer errors when the resolved output has no
+  datum. This unblocks spending V3 script outputs without a datum
+  ([CIP-69](https://cips.cardano.org/cip/CIP-0069)). V1/V2 misuse of the same
+  shape is still caught, but by the ledger at phase-1.
+  ([#10](https://github.com/mlabs-haskell/purescript-cardano-transaction-builder/pull/10))
+
+### Removed
+
+- `WrongSpendWitnessType` constructor of `TxBuildError`. The builder no
+  longer produces this error - see the corresponding entry under
+  _Changed_. ([#10](https://github.com/mlabs-haskell/purescript-cardano-transaction-builder/pull/10))
 
 ## v3.0.0
 
