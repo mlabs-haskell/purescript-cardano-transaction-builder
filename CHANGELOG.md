@@ -6,7 +6,7 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [[Unreleased]](#unreleased)
+- [v4.0.0](#v400)
   - [Changed](#changed)
   - [Removed](#removed)
 - [v3.0.0](#v300)
@@ -19,7 +19,7 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## [Unreleased]
+## v4.0.0
 
 ### Changed
 
