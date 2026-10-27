@@ -6,6 +6,8 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+- [v4.0.1](#v401)
+  - [Added](#added)
 - [v4.0.0](#v400)
   - [Changed](#changed)
   - [Removed](#removed)
@@ -15,9 +17,16 @@ and we follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - [Changed](#changed-2)
   - [Removed](#removed-1)
 - [v2.0.0](#v200)
-  - [Added](#added)
+  - [Added](#added-1)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## v4.0.1
+
+### Added
+
+- MIT `LICENSE` file and `"license": "MIT"` field in `package.json`. The
+  repository now ships an explicit MIT licence declaration.
 
 ## v4.0.0
 

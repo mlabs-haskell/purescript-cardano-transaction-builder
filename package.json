@@ -1,5 +1,6 @@
 {
     "name": "purescript-cardano-transaction-builder",
+    "license": "MIT",
     "type": "module",
     "scripts": {
         "test": "spago test"
